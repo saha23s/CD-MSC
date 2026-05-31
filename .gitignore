@@ -1,2 +1,4 @@
 data/
 Development_data/
+__pycache__/
+*.pyc
