@@ -21,9 +21,9 @@
   "dropout": 0.2,
   "device": "auto",
   "augmentation": {
-    "time_masking":   {"enabled": false, "num_masks": 2, "max_mask_fraction": 0.15, "p": 1.0},
-    "freq_masking":   {"enabled": false, "num_masks": 2, "max_mask_bins": 8,        "p": 1.0},
-    "gaussian_noise": {"enabled": false, "std": 0.05,   "p": 0.5},
+    "time_masking":   {"enabled": true,  "num_masks": 2, "max_mask_fraction": 0.15, "p": 1.0},
+    "freq_masking":   {"enabled": true,  "num_masks": 2, "max_mask_bins": 8,        "p": 1.0},
+    "gaussian_noise": {"enabled": true,  "std": 0.05,   "p": 0.5},
     "freq_shift":     {"enabled": false, "max_shift_bins": 4,                       "p": 0.5},
     "mixup":          {"enabled": false, "alpha": 0.4}
   }

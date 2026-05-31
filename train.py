@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 from torch.optim import AdamW
 
+from framework.augmentation import build_augmentation_pipeline, mixup_batch
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
 from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
 from framework.engine import evaluate_model, train_one_epoch
@@ -155,6 +156,15 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         expected_training_feature_signature = config_signature(feature_signature_payload(config, "training"))
         expected_validation_feature_signature = config_signature(feature_signature_payload(config, "validation"))
         expected_training_stats_signature = expected_training_feature_signature
+
+        aug_pipeline = build_augmentation_pipeline(config.get("augmentation"))
+        aug_cfg      = config.get("augmentation", {})
+        mixup_cfg    = aug_cfg.get("mixup", {})
+        mixup_fn     = (
+            lambda f, sp, dom: mixup_batch(f, sp, dom, alpha=mixup_cfg.get("alpha", 0.4))
+            if mixup_cfg.get("enabled", False) else None
+        )
+
         train_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "training"),
             feature_stats_path=training_stats_path(config),
@@ -163,6 +173,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_training_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            augment=aug_pipeline,
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -198,6 +209,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 dataloader=train_loader,
                 optimizer=optimizer,
                 device=device,
+                mixup_fn=mixup_fn,
             )
             val_metrics = evaluate_model(
                 model=model,

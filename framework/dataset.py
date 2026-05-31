@@ -9,7 +9,7 @@ import json
 import pickle
 import random
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -55,6 +55,7 @@ class MosquitoFeatureDataset(Dataset):
         normalize_features: bool = True,
         expected_feature_signature: Optional[str] = None,
         expected_stats_signature: Optional[str] = None,
+        augment: Optional[Callable] = None,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -64,6 +65,7 @@ class MosquitoFeatureDataset(Dataset):
         self.normalize_features = normalize_features and feature_stats_path is not None
         self.feature_mean = None
         self.feature_std = None
+        self.augment = augment
         if self.normalize_features:
             validate_feature_stats_payload(feature_stats_path, expected_stats_signature)
             self.feature_mean, self.feature_std = load_feature_stats(feature_stats_path)
@@ -87,15 +89,72 @@ class MosquitoFeatureDataset(Dataset):
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
         feature = self._normalize(feature)
+        feature_tensor = torch.tensor(feature, dtype=torch.float32)
+        if self.training and self.augment is not None:
+            feature_tensor = self.augment(feature_tensor)
         return {
             "file_id": sample["file_id"],
-            "feature": torch.tensor(feature, dtype=torch.float32),
+            "feature": feature_tensor,
             "length": feature.shape[0],
             "species_label": sample["species_label"],
             "domain_label": sample["domain_label"],
             "species": sample["species"],
             "domain": sample["domain"],
             "audio_path": sample["audio_path"],
+        }
+
+
+class LodoFeatureDataset(Dataset):
+    """Dataset backed by an in-memory item list rather than a feature pickle.
+
+    Used by ``train_lodo.py`` where items are filtered by domain before loading.
+    """
+
+    def __init__(
+        self,
+        items: List[Dict],
+        feature_mean: Optional[np.ndarray],
+        feature_std: Optional[np.ndarray],
+        max_train_frames: Optional[int],
+        training: bool,
+        normalize_features: bool,
+        augment: Optional[Callable] = None,
+    ) -> None:
+        self.samples = items
+        self.feature_mean = feature_mean
+        self.feature_std = feature_std
+        self.max_train_frames = max_train_frames
+        self.training = training
+        self.normalize_features = normalize_features and feature_mean is not None
+        self.augment = augment
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> Dict:
+        sample = self.samples[index]
+        feature = sample["feature"].astype(np.float32)          # [T, n_mels]
+
+        if self.training and self.max_train_frames and feature.shape[0] > self.max_train_frames:
+            start = random.randint(0, feature.shape[0] - self.max_train_frames)
+            feature = feature[start : start + self.max_train_frames]
+
+        if self.normalize_features:
+            feature = (feature - self.feature_mean) / np.maximum(self.feature_std, 1e-8)
+
+        feature_tensor = torch.tensor(feature, dtype=torch.float32)
+        if self.training and self.augment is not None:
+            feature_tensor = self.augment(feature_tensor)
+
+        return {
+            "file_id":       sample["file_id"],
+            "feature":       feature_tensor,
+            "length":        feature.shape[0],
+            "species_label": sample["species_label"],
+            "domain_label":  sample["domain_label"],
+            "species":       sample["species"],
+            "domain":        sample["domain"],
+            "audio_path":    sample["audio_path"],
         }
 
 

@@ -14,7 +14,6 @@ Author: Sulagna Saha
 
 import argparse
 import hashlib
-import json
 import pickle
 from copy import deepcopy
 from pathlib import Path
@@ -23,11 +22,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from torch.optim import AdamW
-from torch.utils.data import Dataset
 
 from evaluate import evaluate_checkpoint, save_prediction_rows
-from framework.config import config_signature, feature_signature_payload, load_config
-from framework.dataset import pad_collate_fn
+from framework.augmentation import build_augmentation_pipeline, mixup_batch
+from framework.config import config_signature, load_config
+from framework.dataset import LodoFeatureDataset, pad_collate_fn
 from framework.engine import evaluate_model, train_one_epoch
 from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
 from framework.utilization import (
@@ -86,55 +85,6 @@ def compute_lodo_stats(train_items: List[Dict]) -> Tuple[np.ndarray, np.ndarray]
     variance = np.maximum(feature_sq_sum / total_frames - np.square(mean.astype(np.float64)), 1e-12)
     std      = np.sqrt(variance).astype(np.float32)
     return mean, std
-
-
-# ---------------------------------------------------------------------------
-# Dataset that works directly from an in-memory item list
-# ---------------------------------------------------------------------------
-
-class LodoFeatureDataset(Dataset):
-    def __init__(
-        self,
-        items: List[Dict],
-        feature_mean: Optional[np.ndarray],
-        feature_std:  Optional[np.ndarray],
-        max_train_frames: Optional[int],
-        training: bool,
-        normalize_features: bool,
-    ) -> None:
-        self.samples           = items
-        self.feature_mean      = feature_mean
-        self.feature_std       = feature_std
-        self.max_train_frames  = max_train_frames
-        self.training          = training
-        self.normalize_features = normalize_features and feature_mean is not None
-
-    def __len__(self) -> int:
-        return len(self.samples)
-
-    def __getitem__(self, index: int) -> Dict:
-        sample  = self.samples[index]
-        feature = sample["feature"].astype(np.float32)          # [T, n_mels]
-
-        # random temporal crop during training only
-        if self.training and self.max_train_frames and feature.shape[0] > self.max_train_frames:
-            import random
-            start   = random.randint(0, feature.shape[0] - self.max_train_frames)
-            feature = feature[start : start + self.max_train_frames]
-
-        if self.normalize_features:
-            feature = (feature - self.feature_mean) / np.maximum(self.feature_std, 1e-8)
-
-        return {
-            "file_id":       sample["file_id"],
-            "feature":       torch.tensor(feature, dtype=torch.float32),
-            "length":        feature.shape[0],
-            "species_label": sample["species_label"],
-            "domain_label":  sample["domain_label"],
-            "species":       sample["species"],
-            "domain":        sample["domain"],
-            "audio_path":    sample["audio_path"],
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +239,19 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         # ---- feature stats from the LODO training fold ----------------------
         feature_mean, feature_std = compute_lodo_stats(train_items)
 
+        # ---- augmentation ---------------------------------------------------
+        aug_pipeline = build_augmentation_pipeline(config.get("augmentation"))
+        aug_cfg      = config.get("augmentation", {})
+        mixup_cfg    = aug_cfg.get("mixup", {})
+        mixup_fn     = (
+            lambda f, sp, dom: mixup_batch(f, sp, dom, alpha=mixup_cfg.get("alpha", 0.4))
+            if mixup_cfg.get("enabled", False) else None
+        )
+        if aug_pipeline:
+            logger.info("Augmentation pipeline: %s", aug_pipeline)
+        if mixup_cfg.get("enabled", False):
+            logger.info("Mixup enabled with alpha=%.2f", mixup_cfg.get("alpha", 0.4))
+
         # ---- datasets & loaders ---------------------------------------------
         n_train_frames = max_train_frames(config)
         train_dataset  = LodoFeatureDataset(
@@ -298,6 +261,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             max_train_frames=n_train_frames,
             training=True,
             normalize_features=config["normalize_features"],
+            augment=aug_pipeline,
         )
         val_dataset = LodoFeatureDataset(
             items=val_items,
@@ -327,7 +291,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         # ---- training loop --------------------------------------------------
         for epoch in range(1, config["epochs"] + 1):
             train_metrics = train_one_epoch(
-                model=model, dataloader=train_loader, optimizer=optimizer, device=device,
+                model=model, dataloader=train_loader, optimizer=optimizer, device=device, mixup_fn=mixup_fn,
             )
             val_metrics = evaluate_model(
                 model=model,

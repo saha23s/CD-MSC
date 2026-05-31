@@ -150,7 +150,15 @@ def evaluate_model(
     return metrics
 
 
-def train_one_epoch(model, dataloader, optimizer, device) -> dict:
+def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None) -> dict:
+    """Train for one epoch.
+
+    Args:
+        mixup_fn: optional callable matching the signature of
+            ``augmentation.mixup_batch``. When provided, Mixup is applied to
+            every batch and accuracy is computed on the primary (un-permuted)
+            labels only.
+    """
     model.train()
     total_loss = 0.0
     total_species_loss = 0.0
@@ -165,26 +173,31 @@ def train_one_epoch(model, dataloader, optimizer, device) -> dict:
         species_labels = batch["species_labels"].to(device)
         domain_labels = batch["domain_labels"].to(device)
 
+        if mixup_fn is not None:
+            features, sp_a, sp_b, dom_a, dom_b, lam = mixup_fn(features, species_labels, domain_labels)
+        else:
+            sp_a, sp_b, dom_a, dom_b, lam = species_labels, species_labels, domain_labels, domain_labels, 1.0
+
         optimizer.zero_grad()
         outputs = model(features, lengths)
         species_logits = outputs["species_logits"]
         domain_logits = outputs["domain_logits"]
 
-        species_loss = F.cross_entropy(species_logits, species_labels)
-        domain_loss = F.cross_entropy(domain_logits, domain_labels)
+        species_loss = lam * F.cross_entropy(species_logits, sp_a) + (1.0 - lam) * F.cross_entropy(species_logits, sp_b)
+        domain_loss  = lam * F.cross_entropy(domain_logits,  dom_a) + (1.0 - lam) * F.cross_entropy(domain_logits,  dom_b)
         loss = species_loss + domain_loss
         loss.backward()
         optimizer.step()
 
         species_preds = torch.argmax(species_logits, dim=1)
-        domain_preds = torch.argmax(domain_logits, dim=1)
-        batch_size = species_labels.size(0)
+        domain_preds  = torch.argmax(domain_logits, dim=1)
+        batch_size = sp_a.size(0)
 
         total_loss += loss.item() * batch_size
         total_species_loss += species_loss.item() * batch_size
         total_domain_loss += domain_loss.item() * batch_size
-        total_species_correct += (species_preds == species_labels).sum().item()
-        total_domain_correct += (domain_preds == domain_labels).sum().item()
+        total_species_correct += (species_preds == sp_a).sum().item()
+        total_domain_correct  += (domain_preds  == dom_a).sum().item()
         total_items += batch_size
 
     return {
