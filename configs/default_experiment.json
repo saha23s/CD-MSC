@@ -27,6 +27,7 @@
     "freq_masking":   {"enabled": false, "num_masks": 2, "max_mask_bins": 8,        "p": 1.0},
     "gaussian_noise": {"enabled": false, "std": 0.05,   "p": 0.5},
     "freq_shift":     {"enabled": false, "max_shift_bins": 4,                       "p": 0.5},
-    "mixup":          {"enabled": false, "alpha": 0.4}
+    "mixup":          {"enabled": false, "alpha": 0.4},
+    "hpss":           {"enabled": false, "kernel_harm": 17, "kernel_perc": 9, "alpha_min": 0.0, "power": 2.0, "p": 0.5}
   }
 }
