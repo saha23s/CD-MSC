@@ -166,7 +166,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         aug_cfg      = config.get("augmentation", {})
         mixup_cfg    = aug_cfg.get("mixup", {})
         mixup_fn     = (
-            lambda f, sp, dom: mixup_batch(f, sp, dom, alpha=mixup_cfg.get("alpha", 0.4))
+            (lambda f, sp, dom: mixup_batch(f, sp, dom, alpha=mixup_cfg.get("alpha", 0.4)))
             if mixup_cfg.get("enabled", False) else None
         )
 
