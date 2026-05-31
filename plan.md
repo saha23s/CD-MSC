@@ -22,6 +22,8 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 | B2 | MTRCNN LODO + SpecAugment + Gaussian noise | planned | — | — | — | `configs/lodo_aug.json` |
 | E1 | AST (8×8 patch, d=192, L=4) LODO, no aug | planned | — | — | — | `configs/lodo_ast.json` (aug off) |
 | E2 | AST LODO + SpecAugment + Gaussian noise | planned | — | — | — | `configs/lodo_ast.json` |
+| D1 | MTRCNN LODO + DANN (GRL, λ_max=1.0) | planned | — | — | — | `configs/lodo_dann.json` |
+| D2 | AST LODO + DANN + SpecAugment | planned | — | — | — | `configs/lodo_ast_dann.json` |
 
 ---
 
@@ -32,13 +34,14 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 - [ ] Feature extraction: `python extract_features.py`
 - [ ] Smoke test AST: `python framework/ast_model.py`
 - [ ] Submit B1 LODO baseline (all 5 folds)
-- [ ] Compare B1 vs B2 (aug effect) and E1 vs B1 (AST vs MTRCNN)
+- [ ] Compare B1 vs B2 (aug effect), B1 vs D1 (DANN effect), E1 vs B1 (AST vs MTRCNN)
+- [ ] Run D2 only after D1 and E2 show individually positive results
 
 ---
 
 ## Ideas / Directions
 
-- Domain-invariant training (adversarial domain head, gradient reversal)
+- **DANN** (`framework/gradient_reversal.py` implemented) — GRL between shared embedding and domain head; λ annealed 0→λ_max via DANN sigmoid schedule; `"domain_adversarial": true` in config. Works for both MTRCNN and AST.
 - Data augmentation for domain shift (SpecAugment, pitch shift, noise)
 - Class-balanced sampling to address species imbalance
 - Domain-balanced sampling (D5 dominates with 265k/271k clips)

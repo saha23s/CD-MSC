@@ -15,4 +15,8 @@
 - Patch size rationale: wingbeat spans ~20/64 mel bins; 8×8 gives ~2–3 patches across wingbeat region, 200-token sequences at 2s crop — good tradeoff vs. 4×4 (800 tokens).
 - AST LR set to 0.0005 (vs 0.001 for MTRCNN) — transformers typically need lower LR from scratch.
 - Env not yet set up on cluster (requirements.txt needs Python 3.11+; use compute node).
+- DANN implemented (`framework/gradient_reversal.py`): GRL inserts between shared embedding and domain head; λ schedule: `2/(1+exp(-10p))-1` × λ_max, p=epoch/total — starts ~0, saturates near λ_max by epoch 50. Both MTRCNN and AST support `set_grl_lambda()`.
+- DANN config keys: `"domain_adversarial": true`, `"grl_lambda_max": 1.0` (default off).
+- New configs: `lodo_dann.json` (MTRCNN+DANN), `lodo_ast_dann.json` (AST+DANN+aug).
+- Experiment matrix: B1 (baseline LODO) → B2 (aug), D1 (DANN), E1 (AST) as independent ablations → D2 (AST+DANN) only if D1+E1 both win.
 
