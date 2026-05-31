@@ -13,6 +13,7 @@ import torch
 from torch.optim import AdamW
 
 from framework.augmentation import build_augmentation_pipeline, mixup_batch
+from framework.gradient_reversal import dann_lambda
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
 from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
 from framework.engine import evaluate_model, train_one_epoch
@@ -203,13 +204,19 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         best_val_metrics = {}
         last_val_metrics = {}
         epochs_without_improvement = 0
-        for epoch in range(1, config["epochs"] + 1):
+        use_dann    = config.get("domain_adversarial", False)
+        lambda_max  = float(config.get("grl_lambda_max", 1.0))
+        total_epochs = int(config["epochs"])
+
+        for epoch in range(1, total_epochs + 1):
+            grl_lam = dann_lambda(epoch, total_epochs, lambda_max) if use_dann else None
             train_metrics = train_one_epoch(
                 model=model,
                 dataloader=train_loader,
                 optimizer=optimizer,
                 device=device,
                 mixup_fn=mixup_fn,
+                grl_lambda=grl_lam,
             )
             val_metrics = evaluate_model(
                 model=model,

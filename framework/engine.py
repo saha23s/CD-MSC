@@ -150,15 +150,20 @@ def evaluate_model(
     return metrics
 
 
-def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None) -> dict:
+def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None, grl_lambda=None) -> dict:
     """Train for one epoch.
 
     Args:
-        mixup_fn: optional callable matching the signature of
+        mixup_fn:   optional callable matching the signature of
             ``augmentation.mixup_batch``. When provided, Mixup is applied to
             every batch and accuracy is computed on the primary (un-permuted)
             labels only.
+        grl_lambda: if not None, sets the GRL coefficient on the model via
+            ``model.set_grl_lambda(grl_lambda)`` before the epoch starts.
+            Pass the output of ``gradient_reversal.dann_lambda`` each epoch.
     """
+    if grl_lambda is not None and hasattr(model, "set_grl_lambda"):
+        model.set_grl_lambda(grl_lambda)
     model.train()
     total_loss = 0.0
     total_species_loss = 0.0

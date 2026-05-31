@@ -26,6 +26,7 @@ from torch.optim import AdamW
 from evaluate import evaluate_checkpoint, save_prediction_rows
 from framework.augmentation import build_augmentation_pipeline, mixup_batch
 from framework.config import config_signature, load_config
+from framework.gradient_reversal import dann_lambda
 from framework.dataset import LodoFeatureDataset, pad_collate_fn
 from framework.engine import evaluate_model, train_one_epoch
 from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
@@ -289,9 +290,15 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         epochs_without_improvement = 0
 
         # ---- training loop --------------------------------------------------
-        for epoch in range(1, config["epochs"] + 1):
+        use_dann     = config.get("domain_adversarial", False)
+        lambda_max   = float(config.get("grl_lambda_max", 1.0))
+        total_epochs = int(config["epochs"])
+
+        for epoch in range(1, total_epochs + 1):
+            grl_lam = dann_lambda(epoch, total_epochs, lambda_max) if use_dann else None
             train_metrics = train_one_epoch(
-                model=model, dataloader=train_loader, optimizer=optimizer, device=device, mixup_fn=mixup_fn,
+                model=model, dataloader=train_loader, optimizer=optimizer, device=device,
+                mixup_fn=mixup_fn, grl_lambda=grl_lam,
             )
             val_metrics = evaluate_model(
                 model=model,

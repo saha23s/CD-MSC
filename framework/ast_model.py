@@ -30,6 +30,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from framework.gradient_reversal import GradientReversalLayer
+
 
 # ---------------------------------------------------------------------------
 # Positional encoding
@@ -179,7 +181,15 @@ class ASTClassifier(nn.Module):
         self.species_head = nn.Linear(embed_dim, num_species_classes)
         self.domain_head  = nn.Linear(embed_dim, num_domain_classes)
 
+        self.grl: Optional[GradientReversalLayer] = (
+            GradientReversalLayer(lambda_=0.0) if config.get("domain_adversarial", False) else None
+        )
+
         self._init_weights()
+
+    def set_grl_lambda(self, lambda_: float) -> None:
+        if self.grl is not None:
+            self.grl.set_lambda(lambda_)
 
     def _init_weights(self) -> None:
         nn.init.trunc_normal_(self.cls_token, std=0.02)
@@ -237,10 +247,11 @@ class ASTClassifier(nn.Module):
         x = self.norm(x)
 
         # ---- classification heads on CLS token ------------------------------
-        cls_out = x[:, 0]
+        cls_out     = x[:, 0]
+        domain_input = self.grl(cls_out) if self.grl is not None else cls_out
         return {
             "species_logits": self.species_head(cls_out),
-            "domain_logits":  self.domain_head(cls_out),
+            "domain_logits":  self.domain_head(domain_input),
         }
 
 

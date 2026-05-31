@@ -8,7 +8,9 @@ Affiliation: Machine Learning Research Group, University of Oxford
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from framework.gradient_reversal import GradientReversalLayer
 
 
 class ConvStage(nn.Module):
@@ -144,6 +146,15 @@ class MTRCNNClassifier(nn.Module):
         self.species_classifier = nn.Linear(32, num_species_classes)
         self.domain_classifier = nn.Linear(32, num_domain_classes)
 
+        # GRL is only instantiated when domain_adversarial is enabled; otherwise None.
+        self.grl: Optional[GradientReversalLayer] = (
+            GradientReversalLayer(lambda_=0.0) if config.get("domain_adversarial", False) else None
+        )
+
+    def set_grl_lambda(self, lambda_: float) -> None:
+        if self.grl is not None:
+            self.grl.set_lambda(lambda_)
+
     def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> Dict[str, torch.Tensor]:
         x = features.unsqueeze(1).transpose(1, 3)
         x = self.input_bn(x)
@@ -156,7 +167,8 @@ class MTRCNNClassifier(nn.Module):
         ]
         features = torch.cat(branch_outputs, dim=1)
         embedding = F.gelu(self.embedding(features))
+        domain_input = self.grl(embedding) if self.grl is not None else embedding
         return {
             "species_logits": self.species_classifier(embedding),
-            "domain_logits": self.domain_classifier(embedding),
+            "domain_logits":  self.domain_classifier(domain_input),
         }
