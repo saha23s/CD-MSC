@@ -156,10 +156,14 @@ def max_train_frames(config: Dict) -> Optional[int]:
 
 def build_model(config: dict, device: torch.device):
     from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
-    from framework.model import MTRCNNClassifier
 
-    return MTRCNNClassifier(
-        config=config,
-        num_species_classes=len(SPECIES_NAMES),
-        num_domain_classes=len(DOMAIN_NAMES),
-    ).to(device)
+    model_type = config.get("model_type", "mtrcnn")
+    n_species  = len(SPECIES_NAMES)
+    n_domain   = len(DOMAIN_NAMES)
+
+    if model_type == "ast":
+        from framework.ast_model import ASTClassifier
+        return ASTClassifier(config, n_species, n_domain).to(device)
+
+    from framework.model import MTRCNNClassifier
+    return MTRCNNClassifier(config, n_species, n_domain).to(device)
