@@ -6,7 +6,13 @@
 
 - Repo cloned and set up on Mila cluster
 - Data lives in `/network/scratch/s/sahas/CD-MSC/Development_data/` (symlinked via `data/` and `Development_data/`)
-- Unzipping `Development_data.zip` (3.6 GB, ~271k clips) — in progress
+- Unzipping `Development_data.zip` (3.6 GB, ~271k clips) — in progress as of session start
 - Baseline numbers (10-seed, best checkpoint): BA_seen=0.879, BA_unseen=0.185, DSG=0.694
 - Key imbalance: D5 has 265k/271k total clips; species 6/8/9 have <700 clips each
+- `train_lodo.py` implemented — LODO CV, loads train+val pickles, splits by domain in memory, recomputes stats per fold, saves to `outputs/LODO_{fold}_seed{seed}_...`
+- Spectrogram augmentation pipeline implemented (`framework/augmentation.py`): TimeMasking, FrequencyMasking, GaussianNoise, FrequencyShift, Mixup (batch-level). Config-driven via `"augmentation"` block. Wired into both `train.py` and `train_lodo.py`.
+- AST implemented (`framework/ast_model.py`): 8×8 patches, d=192, 4 layers, ~2M params, 2D sinusoidal pos embed, attention masking for variable-length. Use `"model_type": "ast"` in config.
+- Patch size rationale: wingbeat spans ~20/64 mel bins; 8×8 gives ~2–3 patches across wingbeat region, 200-token sequences at 2s crop — good tradeoff vs. 4×4 (800 tokens).
+- AST LR set to 0.0005 (vs 0.001 for MTRCNN) — transformers typically need lower LR from scratch.
+- Env not yet set up on cluster (requirements.txt needs Python 3.11+; use compute node).
 
