@@ -25,6 +25,9 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 | D1 | MTRCNN LODO + DANN (GRL, λ_max=1.0) | planned | — | — | — | `configs/lodo_dann.json` |
 | D2 | AST LODO + DANN + SpecAugment | planned | — | — | — | `configs/lodo_ast_dann.json` |
 | H1 | MTRCNN LODO + HPSS (p=0.5, α_min=0) | planned | — | — | — | `configs/lodo_hpss.json` |
+| M1 | MTRCNN LODO + MixStyle (α=0.1) | planned | — | — | — | `use_mixstyle: true` in config |
+| M2 | MTRCNN LODO + domain-balanced sampling | planned | — | — | — | `domain_balanced_sampling: true` |
+| T1 | B1 + TTBN at test time | planned | — | — | — | `ttbn: true` — zero retraining, apply to B1 ckpt |
 
 ---
 
@@ -36,7 +39,8 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 - [ ] Smoke test AST: `python framework/ast_model.py`
 - [ ] Submit B1 LODO baseline (all 5 folds)
 - [ ] Compare B1 vs B2 (aug effect), B1 vs D1 (DANN effect), E1 vs B1 (AST vs MTRCNN)
-- [ ] Run H1 alongside B2 and D1 (all independent ablations of B1)
+- [ ] Run B2, D1, H1, M1, M2 alongside B1 (all independent ablations)
+- [ ] T1: re-evaluate B1 checkpoints with ttbn=true (free win, no retraining)
 - [ ] Run D2 only after D1 and E2 show individually positive results
 
 ---
@@ -47,7 +51,9 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 - Data augmentation for domain shift (SpecAugment, pitch shift, noise)
 - **HPSS** (`framework/augmentation.py` implemented) — Fitzgerald 2010 Wiener masking; attenuates percussive component (domain noise) while preserving harmonic (wingbeat); `kernel_harm=17, kernel_perc=9, alpha_min=0.0, p=0.5`; enable with `"hpss": {"enabled": true}` in config.
 - Class-balanced sampling to address species imbalance
-- Domain-balanced sampling (D5 dominates with 265k/271k clips)
+- **Domain-balanced sampling** (`framework/utilization.py` implemented) — `WeightedRandomSampler` upweights D1–D4 ~200× to equal expected domain frequency per epoch. `"domain_balanced_sampling": true`.
+- **MixStyle** (`framework/mixstyle.py` implemented) — mixes instance-norm stats `(μ, σ)` between samples during training. MTRCNN: shared instance after ConvStage 0 across all branches. AST: after patch_embed before flatten. `"use_mixstyle": true, "mixstyle_alpha": 0.1, "mixstyle_p": 0.5`.
+- **TTBN** (test-time batch normalisation, implemented in `engine.py`) — at test inference, BN layers use batch stats instead of stored D5 stats. Zero retraining. `"ttbn": true`. Applied to test split only.
 - **LODO cross-validation** (`train_lodo.py` implemented) — Leave-One-Domain-Out CV, `--fold D1..D5`, trains on 4 domains, validates on held-out domain; gives true out-of-domain BA per fold. Not yet run.
 - **AST** (`framework/ast_model.py` implemented) — 8×8 patch, d=192, 4 transformer layers, ~2M params, 2D sinusoidal pos embed, attention masking for variable-length. Select with `"model_type": "ast"` in config.
 
