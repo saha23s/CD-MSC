@@ -27,6 +27,7 @@ from evaluate import evaluate_checkpoint, save_prediction_rows
 from framework.augmentation import build_augmentation_pipeline, mixup_batch
 from framework.config import config_signature, load_config
 from framework.gradient_reversal import dann_lambda
+from framework.utilization import make_balanced_sampler, get_domain_labels
 from framework.dataset import LodoFeatureDataset, pad_collate_fn
 from framework.engine import evaluate_model, train_one_epoch
 from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
@@ -152,7 +153,8 @@ def evaluate_and_save_test(
     output_dir: Path,
 ) -> Dict:
     """Evaluate checkpoint on the official test split and persist results."""
-    result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True)
+    ttbn = config.get("ttbn", False)
+    result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True, ttbn=ttbn)
     metrics     = result["metrics"]
     predictions = result["predictions"]
 
@@ -272,7 +274,11 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             training=False,
             normalize_features=config["normalize_features"],
         )
-        train_loader = make_loader(train_dataset, config["batch_size"],          True,  config["num_workers"], device, pad_collate_fn)
+        sampler = (
+            make_balanced_sampler(get_domain_labels(train_dataset))
+            if config.get("domain_balanced_sampling", False) else None
+        )
+        train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn, sampler=sampler)
         val_loader   = make_loader(val_dataset,   config.get("eval_batch_size",
                                                              config["batch_size"]), False, config["num_workers"], device, pad_collate_fn)
 

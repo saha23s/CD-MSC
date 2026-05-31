@@ -20,6 +20,11 @@
   "weight_decay": 0.0001,
   "dropout": 0.2,
   "device": "auto",
+  "domain_balanced_sampling": false,
+  "use_mixstyle": false,
+  "mixstyle_alpha": 0.1,
+  "mixstyle_p": 0.5,
+  "ttbn": false,
   "domain_adversarial": false,
   "grl_lambda_max": 1.0,
   "augmentation": {

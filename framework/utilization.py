@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 
 def set_seed(seed: int) -> None:
@@ -129,11 +129,37 @@ def write_summary_table(path: Path, report_rows: List[Dict]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def make_loader(dataset, batch_size: int, shuffle: bool, num_workers: int, device: torch.device, collate_fn) -> DataLoader:
+def get_domain_labels(dataset) -> List[int]:
+    """Return a list of integer domain labels, one per dataset sample."""
+    return [item["domain_label"] for item in dataset.samples]
+
+
+def make_balanced_sampler(domain_labels: List[int]) -> WeightedRandomSampler:
+    """WeightedRandomSampler that gives each domain equal expected frequency.
+
+    D5 makes up ~99% of training data; upweighting D1-D4 to equal share exposes
+    the model to more cross-domain examples per epoch without discarding data.
+    """
+    from collections import Counter
+    counts  = Counter(domain_labels)
+    weights = [1.0 / counts[d] for d in domain_labels]
+    return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+
+
+def make_loader(
+    dataset,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int,
+    device: torch.device,
+    collate_fn,
+    sampler=None,
+) -> DataLoader:
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle if sampler is None else False,
+        sampler=sampler,
         num_workers=num_workers,
         collate_fn=collate_fn,
         pin_memory=device.type == "cuda",

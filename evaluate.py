@@ -90,7 +90,7 @@ def append_official_metrics(metrics: Dict, prediction_rows: List[Dict], unseen_d
     }
 
 
-def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: str, return_predictions: bool = True) -> Dict:
+def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: str, return_predictions: bool = True, ttbn: bool = False) -> Dict:
     config = deepcopy(config)
     device = choose_device(config["device"])
     print(f"loading from {checkpoint_path}")
@@ -123,6 +123,7 @@ def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: 
         species_names=SPECIES_NAMES,
         domain_names=DOMAIN_NAMES,
         return_predictions=return_predictions,
+        ttbn=ttbn,
     )
     if return_predictions:
         metrics = result["metrics"]

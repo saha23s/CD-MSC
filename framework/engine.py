@@ -38,8 +38,25 @@ def evaluate_model(
     species_names=None,
     domain_names=None,
     return_predictions: bool = False,
+    ttbn: bool = False,
 ) -> dict:
+    """Evaluate model on a dataloader.
+
+    Args:
+        ttbn: Test-Time Batch Normalisation. When True, all BatchNorm layers
+            use the statistics of the current test batch instead of the stored
+            running statistics accumulated during training. This can
+            substantially improve performance on unseen domains whose feature
+            distribution differs from D5 (the dominant training domain).
+            Has no effect on non-BN models or when BN layers are absent.
+    """
     model.eval()
+    if ttbn:
+        # Selectively put BN layers back into train mode so they compute
+        # batch statistics. Dropout layers stay in eval mode (no dropout).
+        for m in model.modules():
+            if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+                m.training = True
     species_preds = []
     species_labels = []
     domain_preds = []

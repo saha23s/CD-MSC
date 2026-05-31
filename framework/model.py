@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 
 from framework.gradient_reversal import GradientReversalLayer
+from framework.mixstyle import MixStyle
 
 
 class ConvStage(nn.Module):
@@ -60,6 +61,7 @@ class MTRCNNBranch(nn.Module):
         stage_specs: List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]],
         dropout: float,
         n_mels: int,
+        mixstyle: Optional[MixStyle] = None,
     ) -> None:
         super().__init__()
         channels = [1, 16, 32, 64]
@@ -77,6 +79,9 @@ class MTRCNNBranch(nn.Module):
             ]
         )
         self.frequency_projection = nn.Linear(self._infer_frequency_bins(n_mels), 1)
+        # MixStyle applied after stage 0 ([B, 16, T_p, F_p]) — earliest spatial feature map.
+        # All three branches share the same instance so lam and perm are consistent.
+        self.mixstyle = mixstyle
 
     def _infer_frequency_bins(self, n_mels: int) -> int:
         with torch.no_grad():
@@ -87,9 +92,11 @@ class MTRCNNBranch(nn.Module):
 
     def forward(self, x: torch.Tensor, frame_lengths: torch.Tensor) -> torch.Tensor:
         lengths = frame_lengths
-        for stage in self.stages:
+        for i, stage in enumerate(self.stages):
             x = stage(x)
             lengths = stage.output_lengths(lengths)
+            if i == 0 and self.mixstyle is not None:
+                x = self.mixstyle(x)
 
         pooled = masked_mean_max(x, lengths)
         pooled = self.frequency_projection(pooled).squeeze(-1)
@@ -114,6 +121,13 @@ class MTRCNNClassifier(nn.Module):
         super().__init__()
         self.input_bn = nn.BatchNorm2d(config["n_mels"])
 
+        # One shared MixStyle instance ensures the same (lam, perm) across all three
+        # branches — keeps the style mixing coherent.
+        _mixstyle = (
+            MixStyle(alpha=config.get("mixstyle_alpha", 0.1), p=config.get("mixstyle_p", 0.5))
+            if config.get("use_mixstyle", False) else None
+        )
+
         self.kernel_3_branch = MTRCNNBranch(
             stage_specs=[
                 ((3, 3), (1, 1), (1, 1)),
@@ -122,6 +136,7 @@ class MTRCNNClassifier(nn.Module):
             ],
             dropout=config["dropout"],
             n_mels=config["n_mels"],
+            mixstyle=_mixstyle,
         )
         self.kernel_5_branch = MTRCNNBranch(
             stage_specs=[
@@ -131,6 +146,7 @@ class MTRCNNClassifier(nn.Module):
             ],
             dropout=config["dropout"],
             n_mels=config["n_mels"],
+            mixstyle=_mixstyle,
         )
         self.kernel_7_branch = MTRCNNBranch(
             stage_specs=[
@@ -140,6 +156,7 @@ class MTRCNNClassifier(nn.Module):
             ],
             dropout=config["dropout"],
             n_mels=config["n_mels"],
+            mixstyle=_mixstyle,
         )
 
         self.embedding = nn.Linear(64 * 3, 32)

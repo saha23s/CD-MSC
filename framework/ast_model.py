@@ -31,6 +31,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from framework.gradient_reversal import GradientReversalLayer
+from framework.mixstyle import MixStyle
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +186,12 @@ class ASTClassifier(nn.Module):
             GradientReversalLayer(lambda_=0.0) if config.get("domain_adversarial", False) else None
         )
 
+        # MixStyle applied to patch embeddings [B, D, T_p, F_p] before sequence flatten.
+        self.mixstyle: Optional[MixStyle] = (
+            MixStyle(alpha=config.get("mixstyle_alpha", 0.1), p=config.get("mixstyle_p", 0.5))
+            if config.get("use_mixstyle", False) else None
+        )
+
         self._init_weights()
 
     def set_grl_lambda(self, lambda_: float) -> None:
@@ -215,6 +222,10 @@ class ASTClassifier(nn.Module):
         # [B, T, F] → [B, 1, T, F] → Conv2d → [B, D, T_p, F_p]
         x   = self.patch_embed(features.unsqueeze(1))
         T_p = x.size(2)                                    # actual time patches
+
+        # MixStyle on [B, D, T_p, F_p] — before sequence flatten, only during training
+        if self.mixstyle is not None:
+            x = self.mixstyle(x)
 
         # [B, D, T_p, F_p] → [B, T_p*F_p, D]
         x = x.flatten(2).transpose(1, 2)

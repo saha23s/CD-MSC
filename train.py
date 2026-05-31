@@ -14,6 +14,7 @@ from torch.optim import AdamW
 
 from framework.augmentation import build_augmentation_pipeline, mixup_batch
 from framework.gradient_reversal import dann_lambda
+from framework.utilization import make_balanced_sampler, get_domain_labels
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
 from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
 from framework.engine import evaluate_model, train_one_epoch
@@ -54,14 +55,17 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
 def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: Path, model_name: str) -> dict:
     from evaluate import evaluate_checkpoint, save_prediction_rows
 
+    ttbn = config.get("ttbn", False)
     model_output_dir = output_dir / model_name
     model_output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Validation is D5 (seen domain) — TTBN not applied, BN stats are well-calibrated
     validation_result = evaluate_checkpoint(config, checkpoint_path, "validation", return_predictions=True)
     save_json(model_output_dir / "validation_metrics.json", validation_result["metrics"])
     save_prediction_rows(model_output_dir / "validation_predictions.jsonl", validation_result["predictions"])
 
-    test_result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True)
+    # Test contains unseen domains — TTBN adapts BN stats to the test batch
+    test_result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True, ttbn=ttbn)
     save_json(model_output_dir / "test_metrics.json", test_result["metrics"])
     save_prediction_rows(model_output_dir / "test_predictions.jsonl", test_result["predictions"])
 
@@ -190,7 +194,11 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         if config["normalize_features"]:
             print(f"loading from {training_stats_path(config)}")
 
-        train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
+        sampler = (
+            make_balanced_sampler(get_domain_labels(train_dataset))
+            if config.get("domain_balanced_sampling", False) else None
+        )
+        train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn, sampler=sampler)
         eval_batch_size = config.get("eval_batch_size", config["batch_size"])
         val_loader = make_loader(val_dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)
 
