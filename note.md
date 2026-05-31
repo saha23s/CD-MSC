@@ -18,5 +18,7 @@
 - DANN implemented (`framework/gradient_reversal.py`): GRL inserts between shared embedding and domain head; λ schedule: `2/(1+exp(-10p))-1` × λ_max, p=epoch/total — starts ~0, saturates near λ_max by epoch 50. Both MTRCNN and AST support `set_grl_lambda()`.
 - DANN config keys: `"domain_adversarial": true`, `"grl_lambda_max": 1.0` (default off).
 - New configs: `lodo_dann.json` (MTRCNN+DANN), `lodo_ast_dann.json` (AST+DANN+aug).
-- Experiment matrix: B1 (baseline LODO) → B2 (aug), D1 (DANN), E1 (AST) as independent ablations → D2 (AST+DANN) only if D1+E1 both win.
+- Experiment matrix: B1 (baseline LODO) → B2 (aug), D1 (DANN), E1 (AST), H1 (HPSS) as independent ablations → D2 (AST+DANN) only if D1+E1 both win.
+- HPSS implemented (`framework/augmentation.py`): Fitzgerald 2010 Wiener masking on log-mel. Harmonic (horizontal) = wingbeat signal; percussive (vertical) = recording-condition noise. `x_aug = x × (M_h + α×M_p)`, α ~ Uniform(alpha_min, 1.0). kernel_harm=17 (freq), kernel_perc=9 (time — smaller due to ~63 frame clips). scipy.ndimage.median_filter used internally; scipy already present via librosa dep.
+- Key insight from baseline analysis: Cx. pipiens is the only species that generalises (BA_unseen=0.804). An. gambiae and Cx. quinquefasciatus collapse to ~0 BA_unseen. D4 is hardest fold (BA=0.118). Avg training runs only 23.6 epochs — fast convergence on D5.
 

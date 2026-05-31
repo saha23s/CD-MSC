@@ -24,6 +24,7 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 | E2 | AST LODO + SpecAugment + Gaussian noise | planned | — | — | — | `configs/lodo_ast.json` |
 | D1 | MTRCNN LODO + DANN (GRL, λ_max=1.0) | planned | — | — | — | `configs/lodo_dann.json` |
 | D2 | AST LODO + DANN + SpecAugment | planned | — | — | — | `configs/lodo_ast_dann.json` |
+| H1 | MTRCNN LODO + HPSS (p=0.5, α_min=0) | planned | — | — | — | `configs/lodo_hpss.json` |
 
 ---
 
@@ -35,6 +36,7 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 - [ ] Smoke test AST: `python framework/ast_model.py`
 - [ ] Submit B1 LODO baseline (all 5 folds)
 - [ ] Compare B1 vs B2 (aug effect), B1 vs D1 (DANN effect), E1 vs B1 (AST vs MTRCNN)
+- [ ] Run H1 alongside B2 and D1 (all independent ablations of B1)
 - [ ] Run D2 only after D1 and E2 show individually positive results
 
 ---
@@ -43,6 +45,7 @@ Improve cross-domain generalization (reduce DSG) while maintaining or improving 
 
 - **DANN** (`framework/gradient_reversal.py` implemented) — GRL between shared embedding and domain head; λ annealed 0→λ_max via DANN sigmoid schedule; `"domain_adversarial": true` in config. Works for both MTRCNN and AST.
 - Data augmentation for domain shift (SpecAugment, pitch shift, noise)
+- **HPSS** (`framework/augmentation.py` implemented) — Fitzgerald 2010 Wiener masking; attenuates percussive component (domain noise) while preserving harmonic (wingbeat); `kernel_harm=17, kernel_perc=9, alpha_min=0.0, p=0.5`; enable with `"hpss": {"enabled": true}` in config.
 - Class-balanced sampling to address species imbalance
 - Domain-balanced sampling (D5 dominates with 265k/271k clips)
 - **LODO cross-validation** (`train_lodo.py` implemented) — Leave-One-Domain-Out CV, `--fold D1..D5`, trains on 4 domains, validates on held-out domain; gives true out-of-domain BA per fold. Not yet run.
