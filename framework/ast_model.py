@@ -231,8 +231,15 @@ class ASTClassifier(nn.Module):
         x = x.flatten(2).transpose(1, 2)
 
         # ---- positional embeddings ------------------------------------------
+        # If clip is longer than the precomputed table, generate on-the-fly.
         n_patches = T_p * self.freq_patches
-        x = x + self.pos_embed[:, :n_patches, :]
+        if T_p <= self.MAX_TIME_PATCHES:
+            pos = self.pos_embed[:, :n_patches, :]
+        else:
+            pos = build_2d_sinusoidal_pos_embed(
+                T_p, self.freq_patches, x.size(-1), x.device
+            )
+        x = x + pos
 
         # ---- CLS token ------------------------------------------------------
         cls = self.cls_token.expand(B, -1, -1)
