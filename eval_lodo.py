@@ -39,7 +39,10 @@ from framework.utilization import (
 FOLDS = ["D1", "D2", "D3", "D4", "D5"]
 
 
-def eval_fold(config: Dict, fold: str, overwrite: bool, ttbn: bool = False) -> None:
+def eval_fold(
+    config: Dict, fold: str, overwrite: bool,
+    ttbn: bool = False, tent_steps: int = 0, tent_lr: float = 1e-3,
+) -> None:
     config = deepcopy(config)
     if ttbn:
         config["ttbn"] = True
@@ -59,7 +62,12 @@ def eval_fold(config: Dict, fold: str, overwrite: bool, ttbn: bool = False) -> N
             print(f"[{fold}] checkpoint not found: {ckpt} — skipping fold")
             return
 
-    eval_suffix = "_ttbn" if ttbn else ""
+    if tent_steps > 0:
+        eval_suffix = f"_tent{tent_steps}"
+    elif ttbn:
+        eval_suffix = "_ttbn"
+    else:
+        eval_suffix = ""
     best_eval_dir  = output_dir / f"best_model_eval{eval_suffix}"
     final_eval_dir = output_dir / f"final_model_eval{eval_suffix}"
 
@@ -110,7 +118,8 @@ def eval_fold(config: Dict, fold: str, overwrite: bool, ttbn: bool = False) -> N
         torch.load(best_ckpt_path, map_location=device, weights_only=False)["model_state_dict"]
     )
     evaluate_and_save_lodo_val(model, val_loader, device, best_eval_dir, best_ckpt_path, fold)
-    evaluate_and_save_test(config, best_ckpt_path, best_eval_dir, lodo_held_out_domain=fold)
+    evaluate_and_save_test(config, best_ckpt_path, best_eval_dir,
+                           lodo_held_out_domain=fold, tent_steps=tent_steps, tent_lr=tent_lr)
 
     # ---- final checkpoint ---------------------------------------------------
     print(f"[{fold}] evaluating final checkpoint …")
@@ -118,7 +127,8 @@ def eval_fold(config: Dict, fold: str, overwrite: bool, ttbn: bool = False) -> N
         torch.load(final_ckpt_path, map_location=device, weights_only=False)["model_state_dict"]
     )
     evaluate_and_save_lodo_val(model, val_loader, device, final_eval_dir, final_ckpt_path, fold)
-    evaluate_and_save_test(config, final_ckpt_path, final_eval_dir, lodo_held_out_domain=fold)
+    evaluate_and_save_test(config, final_ckpt_path, final_eval_dir,
+                           lodo_held_out_domain=fold, tent_steps=tent_steps, tent_lr=tent_lr)
 
     print(f"[{fold}] done → {output_dir}")
 
@@ -129,6 +139,8 @@ def main() -> None:
     parser.add_argument("--config", default="configs/default_experiment.json")
     parser.add_argument("--overwrite", action="store_true", help="Re-evaluate even if results exist")
     parser.add_argument("--ttbn", action="store_true", help="Enable test-time batch norm; writes to *_ttbn/ subdirs")
+    parser.add_argument("--tent-steps", type=int, default=0, help="TENT adaptation steps per batch (0=off); writes to *_tent{n}/ subdirs")
+    parser.add_argument("--tent-lr", type=float, default=1e-3, help="TENT Adam learning rate")
     parser.add_argument("--eval-batch-size", type=int, default=None, help="Override eval_batch_size in config")
     args = parser.parse_args()
 
@@ -138,7 +150,8 @@ def main() -> None:
     folds  = FOLDS if args.fold == "all" else [args.fold]
 
     for fold in folds:
-        eval_fold(config, fold, overwrite=args.overwrite, ttbn=args.ttbn)
+        eval_fold(config, fold, overwrite=args.overwrite, ttbn=args.ttbn,
+                  tent_steps=args.tent_steps, tent_lr=args.tent_lr)
 
 
 if __name__ == "__main__":
