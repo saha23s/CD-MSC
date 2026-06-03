@@ -51,15 +51,14 @@ def extract_embeddings(model, dataloader, device):
     model.eval()
     embeddings, domain_labels, species_labels = [], [], []
 
-    # Hook to capture the shared embedding (output of frequency projection)
+    # Capture the shared embedding = input to species_classifier (not its output).
+    # For MTRCNN: species_classifier is nn.Linear(32, 9); inp[0] is the 32-dim vector.
+    # For AST:    species_head    is nn.Linear(D, 9); inp[0] is the D-dim CLS token.
     captured = {}
 
     def _hook(module, inp, out):
-        captured["emb"] = out.detach().cpu()
+        captured["emb"] = inp[0].detach().cpu()
 
-    # The shared embedding is the input to both heads.
-    # For MTRCNN: species_classifier is an nn.Linear on the 32-dim embedding.
-    # Register hook on species_classifier (captures its input = the embedding).
     hook_handle = model.species_classifier.register_forward_hook(_hook)
 
     with torch.no_grad():
