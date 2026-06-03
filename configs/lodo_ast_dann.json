@@ -1,4 +1,5 @@
 {
+  "experiment_tag": "ast_dann",
   "seed": 42,
   "model_type": "ast",
   "ast_embed_dim": 192,
