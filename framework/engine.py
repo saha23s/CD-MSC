@@ -211,8 +211,9 @@ def train_one_epoch(
         domain_labels = batch["domain_labels"].to(device)
 
         # FBS-Mix: frequency-band selective style mixing (input-level, before model)
+        # lengths passed so statistics are computed on valid frames only (not padding)
         if fbs_mix_fn is not None:
-            features = fbs_mix_fn(features)
+            features = fbs_mix_fn(features, lengths)
 
         if mixup_fn is not None:
             features, sp_a, sp_b, dom_a, dom_b, lam = mixup_fn(features, species_labels, domain_labels)

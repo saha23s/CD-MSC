@@ -290,6 +290,7 @@ def mixup_batch(
 
 def fbs_mix_batch(
     features: torch.Tensor,
+    lengths: torch.Tensor = None,
     species_lo: int = 9,
     species_hi: int = 36,
     alpha: float = 0.1,
@@ -319,6 +320,11 @@ def fbs_mix_batch(
 
     Args:
         features:   padded log-mel batch  [B, T, F].
+        lengths:    true frame count per sample [B]. When provided, statistics are
+                    computed over valid frames only and padding is restored to zero
+                    after mixing. Without this, padded zeros bias the statistics
+                    (a 63-frame clip padded to 200 frames has 68% zero frames,
+                    pulling the mean toward 0 and inflating the std).
         species_lo: first bin of the species-dominated zone (default 9).
         species_hi: one past the last species-dominated bin (default 36).
         alpha:      Beta concentration for mixing coefficient; lower = subtler mixing.
@@ -327,11 +333,12 @@ def fbs_mix_batch(
 
     Returns:
         features with bins 0:species_lo style-mixed across random pairs.  [B, T, F]
+        Padded positions remain zero.
     """
     import random as _random
     if _random.random() > p:
         return features
-    B = features.size(0)
+    B, T = features.size(0), features.size(1)
     if B < 2 or species_lo <= 0:
         return features
 
@@ -341,15 +348,27 @@ def fbs_mix_batch(
     out  = features.clone()
     band = out[:, :, :species_lo]                              # [B, T, species_lo]
 
-    # Per-sample instance statistics over the time dimension
-    mu  = band.mean(dim=1, keepdim=True)                       # [B, 1, species_lo]
-    sig = (band.var(dim=1, keepdim=True) + eps).sqrt()         # [B, 1, species_lo]
+    if lengths is not None:
+        # Valid-frame mask  [B, T, 1]  — exclude padded zeros from statistics
+        time_idx = torch.arange(T, device=features.device).unsqueeze(0)   # [1, T]
+        valid    = (time_idx < lengths.unsqueeze(1)).unsqueeze(-1).float() # [B, T, 1]
+        counts   = lengths.float().clamp(min=1).view(B, 1, 1)             # [B, 1, 1]
+        mu  = (band * valid).sum(dim=1, keepdim=True) / counts            # [B, 1, species_lo]
+        dev = (band - mu) * valid
+        sig = ((dev ** 2).sum(dim=1, keepdim=True) / counts + eps).sqrt() # [B, 1, species_lo]
+    else:
+        mu  = band.mean(dim=1, keepdim=True)
+        sig = (band.var(dim=1, keepdim=True) + eps).sqrt()
 
     # Normalise, then re-scale with mixed statistics
     mu_mix  = lam * mu  + (1.0 - lam) * mu[perm]
     sig_mix = lam * sig + (1.0 - lam) * sig[perm]
-    out[:, :, :species_lo] = (band - mu) / sig * sig_mix + mu_mix
+    band_out = (band - mu) / sig * sig_mix + mu_mix
 
+    if lengths is not None:
+        band_out = band_out * valid                            # restore padding to zero
+
+    out[:, :, :species_lo] = band_out
     return out
 
 
@@ -361,6 +380,7 @@ def build_fbs_mix_fn(config: dict):
     hi    = config.get("fbmix_species_hi",  36)
     alpha = config.get("fbmix_alpha",        0.1)
     p     = config.get("fbmix_p",            0.5)
-    def _fn(features: torch.Tensor) -> torch.Tensor:
-        return fbs_mix_batch(features, species_lo=lo, species_hi=hi, alpha=alpha, p=p)
+    def _fn(features: torch.Tensor, lengths: torch.Tensor = None) -> torch.Tensor:
+        return fbs_mix_batch(features, lengths=lengths,
+                             species_lo=lo, species_hi=hi, alpha=alpha, p=p)
     return _fn
