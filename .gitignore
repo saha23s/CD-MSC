@@ -1,6 +1,7 @@
 data/
 Development_data/
 outputs/
+sbatch/
 __pycache__/
 *.pyc
 *.pth
