@@ -70,8 +70,14 @@ D1–D4 each have only 80–634 training samples (0.04–0.3%).
 | bal+clip | MTRCNN | lodo_balanced_clipnorm | running | — | — | — |
 | sp_only | MTRCNN | lodo_species_only | running | — | — | — |
 | bal+sp | MTRCNN | lodo_balanced_species_only | running | — | — | — |
-| bal+mix+clip | MTRCNN | lodo_balanced_mixstyle_clipnorm | **submitted** | — | — | — |
+| bal+mix+clip | MTRCNN | lodo_balanced_mixstyle_clipnorm | running | — | — | — |
 | H1 | MTRCNN | lodo_hpss | planned | — | — | — |
+| DicL | MTRCNN | lodo_balanced_dicl | running | — | — | — |
+| DANN+DicL | MTRCNN | lodo_balanced_dann_dicl | running | — | — | — |
+| DicL+SdaL | MTRCNN | lodo_balanced_dicl_sdal | running | — | — | — |
+| **FBS-Mix** | MTRCNN | lodo_balanced_fbsmix | **running** | — | — | — |
+| **DANN+FBS** | MTRCNN | lodo_balanced_dann_fbsmix | **running** | — | — | — |
+| **DANN+DicL+FBS** | MTRCNN | lodo_balanced_dann_dicl_fbsmix | **running** | — | — | — |
 | E0 | AST | lodo_ast_base | running | — | — | — |
 | E1 | AST | lodo_ast_aug | running | — | — | — |
 | E2 | AST | lodo_ast_balanced | running | — | — | — |
@@ -82,12 +88,12 @@ D1–D4 each have only 80–634 training samples (0.04–0.3%).
 
 ## Next Steps
 
-- [ ] Read clipnorm, species_only, bal+mix+clip results when done
+- [ ] Read DicL, FBS-Mix, clipnorm, species_only results when done
 - [ ] Read AST results — does global attention generalise better than local conv?
-- [ ] Multi-seed run on M2+D1 (current best, already >5pp threshold met)
-- [ ] TENT on eval set using M2+D1 checkpoint (evaluate_tent.py)
-- [ ] Produce submission file from M2+D1 checkpoint
-- [ ] Revisit TTBN: try with eval data only (not test set), or larger batches
+- [ ] Update ensemble_template.json with best members + weights once results land
+- [ ] Multi-seed run on winner (gate on FBS-Mix / DicL results vs M2+D1)
+- [ ] TENT on eval set using best checkpoint (evaluate_tent.py)
+- [ ] Produce submission file (evaluate_ensemble.py or single-model)
 
 ---
 
@@ -106,18 +112,38 @@ D1–D4 each have only 80–634 training samples (0.04–0.3%).
 - `outputs/`, `*.pth`, `logs/`, `sbatch/` are git-ignored
 - BA_seen/BA_unseen uses held-out domain for LODO (fixed 2026-06-03)
 - `experiment_tag` in config → unique output dir name
-- AST jobs: 32G mem (long-sequence attention)
+- AST jobs: 32G mem; `max_eval_frames: 1024` required to avoid OOM on long clips
 - Per-clip normalisation: `clip_normalize: true` in config (dataset.py)
 - Domain loss weight: `domain_loss_weight: 0.0` for species-only training
 - TENT: `evaluate_tent.py --checkpoint <path> --eval-dir data/Evaluation_data/`
+- DicL: `dicl_weight: 0.1, dicl_tau: 0.07` — needs `domain_balanced_sampling: true` for cross-domain pairs in batch
+- FBS-Mix: `freq_band_mixstyle: true, fbmix_species_lo: 9, fbmix_species_hi: 36` — padding-aware (masks stats on valid frames, restores zeros after mix)
+- Ensemble: `evaluate_ensemble.py --members ensemble_template.json --eval-dir data/Evaluation_data/`
+
+---
+
+## Novel Method: FBS-Mix
+
+**Frequency-Band Selective Mix** — data-motivated novel contribution.
+
+Variance ratio analysis (within-domain / cross-domain) on test split:
+- Bins 0-8  (~0-500 Hz):    ratio 0.30-0.93 → **domain-dominated** (recording noise floor)
+- Bins 9-35 (~500-2.2kHz):  ratio 1.50-4.12 → **species-dominated** (wingbeat core, peak at bin 17 = 1060Hz)
+- Bins 36-63 (~2.2-4kHz):   ratio 0.73-1.47 → mixed/unclear
+
+This explains M2+M1 ≈ M2: standard MixStyle mixes ALL bins, corrupting species signal (9-35) while helping domain noise (0-8). Net effect ≈ 0.
+
+FBS-Mix: mix ONLY bins 0-8 (domain), protect bins 9-35 exactly, leave 36-63 unchanged.
+Key implementation detail: statistics computed on valid frames only (masked by lengths tensor) — padding zeros would otherwise bias mean/std by 3× for short clips.
 
 ---
 
 ## Ideas / Future Directions
 
-- Multi-seed M2+D1 to get confidence intervals
+- Multi-seed on winner (gate on FBS-Mix / DicL results)
 - Curriculum domain sampling: anneal from natural imbalance → balanced over training
 - Joint (species × domain) balanced sampling
-- Contrastive loss: push same-species embeddings together across domains
 - Source-free domain adaptation on unlabelled eval clips (TENT variant)
-- Analyse what the eval set domain distribution looks like after M2+D1 embeddings
+- Analyse M2+D1 embedding space — does the t-SNE cluster collapse fix?
+- Domain Envelope Subtraction (DES): subtract per-clip smooth spectral envelope (Gaussian smoothed over mel bins) before model — closed-form acoustic domain removal
+- FBS-Mix for AST: apply at patch-embed output, split frequency patches into low/high

@@ -46,3 +46,21 @@
 - t-SNE (logit-space, 9-dim) of B1 embeddings: D1–D4 collapse to isolated corner, completely separate from D5 cloud. Model routes all OOD samples to same region — structured wrong predictions, not uncertainty.
 - `experiment_tag` in config appended to output dir name to prevent collisions across DG variants sharing same hyperparams.
 
+## 2026-06-03 (continued)
+
+- DR-BioL (Hou et al., arXiv:2510.00346) reviewed: same mosquito problem, introduces DicL (domain-invariant contrastive loss — positive pairs = same species, different domain) and SdaL (species-conditional MMD). Their DANN ablation hurts by -0.45% — consistent with our D1 result (+0.5pp). DicL is conceptually stronger than DANN: explicit pull vs adversarial push.
+- DicL implemented (`framework/losses.py`): τ=0.07 (vs paper's 0.01 — more stable with small minority batches). Returns 0 gracefully if no cross-domain pairs in batch. Must combine with domain_balanced_sampling.
+- SdaL implemented: per-species RBF-kernel MMD², skips species-domain subsets with <2 samples.
+- Both models now expose `"embedding"` in forward() output dict (MTRCNN: 32-dim; AST: embed_dim CLS token). Fixes the t-SNE hook issue.
+- AST OOM fix: `max_eval_frames: 1024` centre-crop at eval time. 15k-frame clips → 15k tokens → 225M attention elements per layer → OOM. Fix: centre-crop to 1024 frames (128 patches × 8). Set in all AST configs.
+- Eval set analysis: 15,573 clips, ~85% D5-like by nearest-centroid in log-mel space. Challenge metric dominated by D5; LODO is the honest DG measure. Eval set is a valid target for test-time adaptation (TENT, domain envelope removal).
+- Frequency-band variance ratio analysis on test split: within-domain/cross-domain ratio per mel bin reveals:
+  - Bins 0-8 (0-500 Hz): ratio 0.30-0.93 → domain-dominated (recording noise floor)
+  - Bins 9-35 (500-2.2 kHz): ratio 1.50-4.12 → species-dominated (wingbeat core; peak at bin 17 = 1060 Hz)
+  - Bins 36-63 (2.2-4 kHz): ratio 0.73-1.47 → mixed
+  - This U-shape explains M2+M1 ≈ M2: MixStyle mixes ALL bins, corrupting the wingbeat core while helping domain noise — effects cancel.
+- FBS-Mix implemented (`framework/augmentation.py:fbs_mix_batch`): input-level batch transform, mixes bins 0-8 only via instance-stat interpolation (Beta λ~B(0.1,0.1)), protects bins 9-35 exactly, leaves 36-63 unchanged.
+- FBS-Mix padding fix: statistics computed on valid frames only using lengths mask. Without this, a 63-frame clip padded to 200 has mean biased 3× toward zero (68% zero padding). Padded positions restored to zero after mixing.
+- 3 FBS-Mix experiments submitted (jobs 9729812-9729814): balanced_fbsmix (vs M2+M1), balanced_dann_fbsmix (vs M2+D1 current best 0.316), balanced_dann_dicl_fbsmix (full combo).
+- Ensemble inference script: `evaluate_ensemble.py` — weighted softmax averaging from JSON spec, supports both submission (WAV dir) and eval (feature pickle) modes.
+
