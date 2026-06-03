@@ -1,4 +1,5 @@
 {
+  "experiment_tag": "dann",
   "seed": 42,
   "model_type": "mtrcnn",
   "domain_adversarial": true,

@@ -1,68 +1,123 @@
 # Research Plan — BioDCASE 2026 CD-MSC
 
 **Challenge:** Cross-Domain Mosquito Species Classification  
-**Primary metric:** `species_balanced_accuracy` on unseen domains  
+**Primary metric:** `species_balanced_accuracy` on unseen domains (LODO BA_unseen)  
 **DSG** (`|BA_unseen - BA_seen|`) — lower is better  
-**Baseline (10-seed best-ckpt):** BA_seen=0.879, BA_unseen=0.185, DSG=0.694
+**Baseline (10-seed, official partition):** BA_seen=0.881, BA_unseen=0.175, DSG=0.705
 
 ---
 
-## Goal
+## Evaluation Protocol
 
-Improve cross-domain generalization (reduce DSG) while maintaining or improving BA_unseen.
+All DG experiments use **LODO (Leave-One-Domain-Out)** as the evaluation:
+- Train on 4 domains, validate + test on the held-out domain
+- Run all 5 folds (D1–D5), report **mean LODO BA_unseen** as primary metric
+- Secondary: mean BA_seen, mean DSG
+- Single seed (42) for initial screen; multi-seed only if mean LODO BA_unseen improves >5pp over B1
 
----
+**B1 LODO baseline (seed 42, corrected BA_seen/BA_unseen):**
 
-## Experiments
+| Fold | BA_seen | BA_unseen | DSG   |
+|------|---------|-----------|-------|
+| D1   | 0.589   | 0.051     | 0.538 |
+| D2   | 0.598   | 0.246     | 0.352 |
+| D3   | 0.499   | 0.265     | 0.235 |
+| D4   | 0.625   | 0.100     | 0.525 |
+| D5   | 0.209   | 0.067     | 0.142 |
+| **Mean** | **0.504** | **0.146** | **0.358** |
 
-| ID | Description | Status | BA_seen | BA_unseen | DSG | Notes |
-|----|-------------|--------|---------|-----------|-----|-------|
-| B0 | Baseline MTRCNN (10-seed) | done | 0.879 | 0.185 | 0.694 | released checkpoint |
-| B1 | MTRCNN LODO (D1–D5 folds, no aug) | planned | — | — | — | `train_lodo.py --fold Dx` |
-| B2 | MTRCNN LODO + SpecAugment + Gaussian noise | planned | — | — | — | `configs/lodo_aug.json` |
-| E1 | AST (8×8 patch, d=192, L=4) LODO, no aug | planned | — | — | — | `configs/lodo_ast.json` (aug off) |
-| E2 | AST LODO + SpecAugment + Gaussian noise | planned | — | — | — | `configs/lodo_ast.json` |
-| D1 | MTRCNN LODO + DANN (GRL, λ_max=1.0) | planned | — | — | — | `configs/lodo_dann.json` |
-| D2 | AST LODO + DANN + SpecAugment | planned | — | — | — | `configs/lodo_ast_dann.json` |
-| H1 | MTRCNN LODO + HPSS (p=0.5, α_min=0) | planned | — | — | — | `configs/lodo_hpss.json` |
-| M1 | MTRCNN LODO + MixStyle (α=0.1) | planned | — | — | — | `use_mixstyle: true` in config |
-| M2 | MTRCNN LODO + domain-balanced sampling | planned | — | — | — | `domain_balanced_sampling: true` |
-| T1 | B1 + TTBN at test time | planned | — | — | — | `ttbn: true` — zero retraining, apply to B1 ckpt |
-
----
-
-## Next Steps
-
-- [ ] Wait for Development_data unzip to finish
-- [ ] Run `pip install -r requirements.txt` on compute node
-- [ ] Feature extraction: `python extract_features.py`
-- [ ] Smoke test AST: `python framework/ast_model.py`
-- [ ] Submit B1 LODO baseline (all 5 folds)
-- [ ] Compare B1 vs B2 (aug effect), B1 vs D1 (DANN effect), E1 vs B1 (AST vs MTRCNN)
-- [ ] Run B2, D1, H1, M1, M2 alongside B1 (all independent ablations)
-- [ ] T1: re-evaluate B1 checkpoints with ttbn=true (free win, no retraining)
-- [ ] Run D2 only after D1 and E2 show individually positive results
+Note: D5 fold collapses because D5 = 99.4% of training data (212,339/213,647 samples).
+D1–D4 each have only 80–634 training samples (0.04–0.3%).
 
 ---
 
-## Ideas / Directions
+## Key Insight: D5 Dominance is the Root Cause
 
-- **DANN** (`framework/gradient_reversal.py` implemented) — GRL between shared embedding and domain head; λ annealed 0→λ_max via DANN sigmoid schedule; `"domain_adversarial": true` in config. Works for both MTRCNN and AST.
-- Data augmentation for domain shift (SpecAugment, pitch shift, noise)
-- **HPSS** (`framework/augmentation.py` implemented) — Fitzgerald 2010 Wiener masking; attenuates percussive component (domain noise) while preserving harmonic (wingbeat); `kernel_harm=17, kernel_perc=9, alpha_min=0.0, p=0.5`; enable with `"hpss": {"enabled": true}` in config.
-- Class-balanced sampling to address species imbalance
-- **Domain-balanced sampling** (`framework/utilization.py` implemented) — `WeightedRandomSampler` upweights D1–D4 ~200× to equal expected domain frequency per epoch. `"domain_balanced_sampling": true`.
-- **MixStyle** (`framework/mixstyle.py` implemented) — mixes instance-norm stats `(μ, σ)` between samples during training. MTRCNN: shared instance after ConvStage 0 across all branches. AST: after patch_embed before flatten. `"use_mixstyle": true, "mixstyle_alpha": 0.1, "mixstyle_p": 0.5`.
-- **TTBN** (test-time batch normalisation, implemented in `engine.py`) — at test inference, BN layers use batch stats instead of stored D5 stats. Zero retraining. `"ttbn": true`. Applied to test split only.
-- **LODO cross-validation** (`train_lodo.py` implemented) — Leave-One-Domain-Out CV, `--fold D1..D5`, trains on 4 domains, validates on held-out domain; gives true out-of-domain BA per fold. Not yet run.
-- **AST** (`framework/ast_model.py` implemented) — 8×8 patch, d=192, 4 transformer layers, ~2M params, 2D sinusoidal pos embed, attention masking for variable-length. Select with `"model_type": "ast"` in config.
+Any DG technique applied without addressing training imbalance is fighting D5 overfitting.
+Domain-balanced sampling (M2) is the highest-priority structural fix.
+MixStyle without balanced sampling mostly mixes D5 with D5 — not useful.
 
 ---
 
-## Milestones
+## Experiment Priority Queue
 
-| Date | Milestone |
-|------|-----------|
-| — | Baseline reproduced locally |
-| — | First improved run > BA_unseen 0.185 |
-| — | Challenge submission |
+### Tier 1 — Structural (highest expected impact)
+
+| ID | Config | Change from B1 | Rationale |
+|----|--------|----------------|-----------|
+| **T1** | — (no retraining) | Re-eval B1 with `ttbn: true` | TTBN uses batch stats at test time instead of stored D5-biased running stats. Free. |
+| **M2** | `lodo_balanced.json` | `domain_balanced_sampling: true` | WeightedRandomSampler equalises domain frequency per epoch. Most direct fix for D5 dominance. |
+
+### Tier 2 — Feature-level DG
+
+| ID | Config | Change from B1 | Rationale |
+|----|--------|----------------|-----------|
+| **M1** | `lodo_mixstyle.json` | `use_mixstyle: true` | MixStyle mixes instance-norm stats (μ, σ) across samples. Ablation: without balanced sampling. |
+| **M2+M1** | `lodo_balanced_mixstyle.json` | `domain_balanced_sampling` + `use_mixstyle` | With balanced sampling, MixStyle mixes across diverse domain statistics. Best expected combo. |
+
+### Tier 3 — Adversarial
+
+| ID | Config | Change from B1 | Rationale |
+|----|--------|----------------|-----------|
+| **D1** | `lodo_dann.json` | `domain_adversarial: true` | DANN GRL. Ablation: DANN alone (without balanced sampling). |
+| **M2+D1** | `lodo_balanced_dann.json` | `domain_balanced_sampling` + `domain_adversarial` | DANN with balanced domains — adversary sees diverse mix. |
+
+### Tier 4 — Augmentation
+
+| ID | Config | Change from B1 | Rationale |
+|----|--------|----------------|-----------|
+| **B2** | `lodo_aug.json` | SpecAugment + Gaussian noise | Breaks texture patterns that may be domain-specific. Already configured. |
+| **H1** | `lodo_hpss.json` | HPSS (p=0.5, α_min=0) | Attenuates percussive recording noise. Already configured. |
+
+### Tier 5 — Architecture
+
+| ID | Config | Change from B1 | Rationale |
+|----|--------|----------------|-----------|
+| **E1** | `lodo_ast.json` | AST (d=192, L=4, 8×8 patch) | Global attention vs. local conv. ~2M params. Run after MTRCNN DG experiments converge. |
+| **E2** | `lodo_ast_dann.json` | AST + DANN + SpecAugment | Full AST DG stack. |
+
+---
+
+## Experiment Results Table
+
+| ID | Config | LODO BA_unseen (mean) | BA_seen | DSG | Notes |
+|----|--------|-----------------------|---------|-----|-------|
+| B1 | default | 0.146 | 0.504 | 0.358 | Baseline, seed 42 |
+| T1 | — | — | — | — | TTBN re-eval of B1 checkpoints |
+| M2 | lodo_balanced | — | — | — | |
+| M1 | lodo_mixstyle | — | — | — | |
+| M2+M1 | lodo_balanced_mixstyle | — | — | — | |
+| B2 | lodo_aug | — | — | — | |
+| H1 | lodo_hpss | — | — | — | |
+| D1 | lodo_dann | — | — | — | |
+| M2+D1 | lodo_balanced_dann | — | — | — | |
+| E1 | lodo_ast | — | — | — | |
+| E2 | lodo_ast_dann | — | — | — | |
+
+---
+
+## Submission Strategy
+
+1. Run Tier 1–2 first; gate Tier 3+ on positive signal from M2
+2. Winner → 10-seed multi-seed run
+3. TTBN is free — apply to all final checkpoints at submission
+4. Re-evaluate with official partition (split_summary.json) for challenge submission format
+
+---
+
+## Implementation Notes
+
+- All Tier 1–4 experiments are config-only (no code changes)
+- T1: temporarily set `ttbn: true` in config, run `python eval_lodo.py --fold all --overwrite`
+- `outputs/` is git-ignored
+- BA_seen/BA_unseen in evaluate.py now correctly uses held-out domain for LODO (fixed 2026-06-03)
+- sbatch scripts go in `sbatch/`
+
+---
+
+## Ideas / Future Directions
+
+- Domain-specific normalization: separate feature stats per domain at training time
+- Test-time augmentation (TTA): ensemble augmented views at inference
+- Contrastive loss: push same-species embeddings together across domains
+- Source-free domain adaptation: fine-tune BN layers on unlabelled test domain data

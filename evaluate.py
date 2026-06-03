@@ -71,8 +71,23 @@ def subset_balanced_accuracy(prediction_rows: List[Dict]) -> Optional[float]:
     return balanced_accuracy(preds, labels, len(SPECIES_NAMES))
 
 
-def append_official_metrics(metrics: Dict, prediction_rows: List[Dict], unseen_domain_by_species: Dict[str, str]) -> Dict:
-    annotated_rows = annotate_evaluation_partition(prediction_rows, unseen_domain_by_species)
+def append_official_metrics(
+    metrics: Dict,
+    prediction_rows: List[Dict],
+    unseen_domain_by_species: Dict[str, str],
+    lodo_held_out_domain: Optional[str] = None,
+) -> Dict:
+    if lodo_held_out_domain is not None:
+        # In LODO evaluation, "unseen" = all samples from the held-out domain.
+        annotated_rows = []
+        for row in prediction_rows:
+            annotated_row = dict(row)
+            annotated_row["evaluation_partition"] = (
+                "unseen" if annotated_row.get("true_domain_label") == lodo_held_out_domain else "seen"
+            )
+            annotated_rows.append(annotated_row)
+    else:
+        annotated_rows = annotate_evaluation_partition(prediction_rows, unseen_domain_by_species)
     seen_rows = [row for row in annotated_rows if row["evaluation_partition"] == "seen"]
     unseen_rows = [row for row in annotated_rows if row["evaluation_partition"] == "unseen"]
 
@@ -90,7 +105,14 @@ def append_official_metrics(metrics: Dict, prediction_rows: List[Dict], unseen_d
     }
 
 
-def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: str, return_predictions: bool = True, ttbn: bool = False) -> Dict:
+def evaluate_checkpoint(
+    config: Dict,
+    checkpoint_path: Union[str, Path],
+    split: str,
+    return_predictions: bool = True,
+    ttbn: bool = False,
+    lodo_held_out_domain: Optional[str] = None,
+) -> Dict:
     config = deepcopy(config)
     device = choose_device(config["device"])
     print(f"loading from {checkpoint_path}")
@@ -112,7 +134,7 @@ def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: 
     dataloader = make_loader(dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)
 
     model = build_model(config, device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     result = evaluate_model(
         model=model,
@@ -129,7 +151,9 @@ def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: 
         metrics = result["metrics"]
         predictions = result["predictions"]
         if split == "test":
-            official_result = append_official_metrics(metrics, predictions, load_unseen_domain_by_species(config))
+            official_result = append_official_metrics(
+                metrics, predictions, load_unseen_domain_by_species(config), lodo_held_out_domain
+            )
             metrics = official_result["metrics"]
             predictions = official_result["predictions"]
     else:

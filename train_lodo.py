@@ -114,7 +114,9 @@ def experiment_name(fold: str, seed: int, config: Dict) -> str:
     epochs     = int(config["epochs"])
     min_epoch  = int(config.get("early_stopping_min_epoch", 10))
     patience   = int(config.get("early_stopping_patience", 10))
-    return f"LODO_{fold}_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    base = f"LODO_{fold}_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    tag = config.get("experiment_tag", "")
+    return f"{base}_{tag}" if tag else base
 
 
 def evaluate_and_save_lodo_val(
@@ -151,10 +153,14 @@ def evaluate_and_save_test(
     config: Dict,
     checkpoint_path: Path,
     output_dir: Path,
+    lodo_held_out_domain: Optional[str] = None,
 ) -> Dict:
     """Evaluate checkpoint on the official test split and persist results."""
     ttbn = config.get("ttbn", False)
-    result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True, ttbn=ttbn)
+    result = evaluate_checkpoint(
+        config, checkpoint_path, "test", return_predictions=True, ttbn=ttbn,
+        lodo_held_out_domain=lodo_held_out_domain,
+    )
     metrics     = result["metrics"]
     predictions = result["predictions"]
 
@@ -380,15 +386,15 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
 
         # ---- post-training evaluation: best checkpoint ----------------------
         logger.info("Evaluating best checkpoint (LODO val + test).")
-        model.load_state_dict(torch.load(best_ckpt_path, map_location=device)["model_state_dict"])
+        model.load_state_dict(torch.load(best_ckpt_path, map_location=device, weights_only=False)["model_state_dict"])
         evaluate_and_save_lodo_val(model, val_loader, device, output_dir / "best_model_eval", best_ckpt_path, fold)
-        evaluate_and_save_test(config, best_ckpt_path, output_dir / "best_model_eval")
+        evaluate_and_save_test(config, best_ckpt_path, output_dir / "best_model_eval", lodo_held_out_domain=fold)
 
         # ---- post-training evaluation: final checkpoint ---------------------
         logger.info("Evaluating final checkpoint (LODO val + test).")
-        model.load_state_dict(torch.load(final_ckpt_path, map_location=device)["model_state_dict"])
+        model.load_state_dict(torch.load(final_ckpt_path, map_location=device, weights_only=False)["model_state_dict"])
         evaluate_and_save_lodo_val(model, val_loader, device, output_dir / "final_model_eval", final_ckpt_path, fold)
-        evaluate_and_save_test(config, final_ckpt_path, output_dir / "final_model_eval")
+        evaluate_and_save_test(config, final_ckpt_path, output_dir / "final_model_eval", lodo_held_out_domain=fold)
 
         return {
             "status":           "completed",
