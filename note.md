@@ -46,7 +46,43 @@
 - t-SNE (logit-space, 9-dim) of B1 embeddings: D1–D4 collapse to isolated corner, completely separate from D5 cloud. Model routes all OOD samples to same region — structured wrong predictions, not uncertainty.
 - `experiment_tag` in config appended to output dir name to prevent collisions across DG variants sharing same hyperparams.
 
-## 2026-06-03 (continued)
+## 2026-06-03 (session 2)
+
+**D5 exclusion finding:** D5 = 99.4% of training data (212,339/213,647 samples). Holding it out leaves only 1,308 training samples — data starvation, not domain shift. All LODO means must exclude D5. D5 test set = 84.4% of total test set, so standard-split BA_unseen=0.175 is also D5-dominated and uninformative. LODO D1–D4 mean is the honest metric.
+
+**Current best (LODO D1–D4 mean, seed 42):** balanced_dann_fbsmix: BA_unseen=0.385, DSG=0.212 (3/4 folds — D1 rerunning job 9730635). balanced_dann: BA_unseen=0.368, DSG=0.276 (4/4, confirmed best complete result).
+
+**DiCL diagnosis:** DiCL fires on 100% of batches with ~200 cross-domain positive pairs — not a hit-rate problem. Likely redundant with DANN (both push domain invariance from opposite directions on a 32-dim embedding). Projection head ablation (32→128 dim, τ=0.07 and τ=0.2) submitted as jobs 9730937–38 to test geometry hypothesis.
+
+**Physics-grounded wingbeat features implemented:**
+- Spectral centroid of mel bins 14–23 (400–700 Hz) computed via softmax-weighted bin expectation over valid frames — amplitude-invariant, domain-invariant by construction
+- Concatenated to CNN output (192→193 dim) before embedding layer
+- Auxiliary regression head predicts normalised wingbeat frequency (0–1 over 400–700 Hz) from per-species literature values (Mukundarajan 2017, Brogdon 1994, Kiskin 2020 HumBugDB)
+- `use_wingbeat_feature: true` + `wingbeat_weight: 0.5` in config
+
+**New model features added:**
+- `embed_dim` configurable (default 32, backwards-compatible) — affects all downstream layers
+- `GroupDROState` (framework/group_dro.py): per-domain exponential loss reweighting, `group_dro_eta` config key
+- `species_balanced_loss: true` — inverse-frequency CE weighting computed from training split
+- `contrastive_proj_dim: 128` — 2-layer MLP projection head (32→128→128) for DiCL/SdaL
+- TENT on LODO: `eval_lodo.py --tent-steps N` — per-batch entropy minimisation of BN/LN affine params
+
+**Domain-specific gap identified:** Current model treats this as generic audio classification. Mosquito wingbeats = narrowband harmonic signal; microphone response changes spectral envelope but NOT harmonic spacing. Key interventions submitted:
+- HPSS p=1.0 (job 9731297): separates harmonic wingbeat from percussive background
+- clip_normalize (job 9731298): per-bin CMVN removes microphone frequency response
+- HPSS + clip_normalize (job 9731299): both combined
+
+**Paper ablation experiments submitted (2026-06-03):**
+- Multi-seed (1234, 3407) for baseline/balanced/balanced_dann/balanced_dann_fbsmix: jobs 9731135–42
+- DANN lambda sweep (0.5, 2.0; 1.0 already done): jobs 9731143–44
+- balanced_mixstyle: job 9731145
+- GroupDRO (η=0.01): job 9731174
+- embed_dim=64,128: jobs 9731175–76
+- SpecAugment (time+freq masking): job 9731177
+- Species-balanced loss: job 9731178
+- HPSS/clip_normalize: jobs 9731297–99
+
+## 2026-06-03 (continued — session 1)
 
 - DR-BioL (Hou et al., arXiv:2510.00346) reviewed: same mosquito problem, introduces DicL (domain-invariant contrastive loss — positive pairs = same species, different domain) and SdaL (species-conditional MMD). Their DANN ablation hurts by -0.45% — consistent with our D1 result (+0.5pp). DicL is conceptually stronger than DANN: explicit pull vs adversarial push.
 - DicL implemented (`framework/losses.py`): τ=0.07 (vs paper's 0.01 — more stable with small minority batches). Returns 0 gracefully if no cross-domain pairs in batch. Must combine with domain_balanced_sampling.
@@ -63,4 +99,6 @@
 - FBS-Mix padding fix: statistics computed on valid frames only using lengths mask. Without this, a 63-frame clip padded to 200 has mean biased 3× toward zero (68% zero padding). Padded positions restored to zero after mixing.
 - 3 FBS-Mix experiments submitted (jobs 9729812-9729814): balanced_fbsmix (vs M2+M1), balanced_dann_fbsmix (vs M2+D1 current best 0.316), balanced_dann_dicl_fbsmix (full combo).
 - Ensemble inference script: `evaluate_ensemble.py` — weighted softmax averaging from JSON spec, supports both submission (WAV dir) and eval (feature pickle) modes.
+- Experiment timing (single LODO fold, 1 GPU, early stop min10/pati5): MTRCNN baseline ~27 min (14 epochs, ~1:50/epoch); MTRCNN balanced+DANN+DicL ~23 min (15 epochs, ~1:30/epoch); AST base ~1h 43 min (14 epochs, ~7.3 min/epoch). AST is ~4× slower per epoch than MTRCNN.
+- Scale-up: MTRCNN — all 5 folds × 1 seed sequential ~2.5h; 5 seeds × 5 folds sequential ~12h (or ~2.5h with 5 parallel SLURM jobs). AST — all 5 folds × 1 seed ~8-10h (overnight); 5 seeds × 5 folds ~10h with 5 parallel jobs. AST multi-seed sweeps only feasible for selected configs, not full ablation matrix.
 

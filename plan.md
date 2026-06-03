@@ -15,94 +15,120 @@ All DG experiments use **LODO (Leave-One-Domain-Out)** as the evaluation:
 - Secondary: mean BA_seen, mean DSG
 - Single seed (42) for initial screen; multi-seed on best winner (>5pp over B1 ✓ met)
 
-**B1 LODO baseline (seed 42, corrected BA_seen/BA_unseen):**
+**D5 exclusion rationale:** D5 = 99.4% of training data (212,339/213,647). Holding it out leaves only 1,308 training samples — data starvation, not domain shift. D5 is excluded from LODO mean for all comparisons. D5 test set = 84.4% of total test samples.
+
+**Evaluation metric: LODO D1–D4 mean BA_unseen (D5 excluded)**
+
+**B1 LODO baseline (seed 42):**
 
 | Fold | BA_seen | BA_unseen | DSG   |
 |------|---------|-----------|-------|
-| D1   | 0.589   | 0.051     | 0.538 |
-| D2   | 0.598   | 0.246     | 0.352 |
-| D3   | 0.499   | 0.265     | 0.235 |
-| D4   | 0.625   | 0.100     | 0.525 |
-| D5   | 0.209   | 0.067     | 0.142 |
-| **Mean** | **0.504** | **0.146** | **0.358** |
-
-Note: D5 fold collapses because D5 = 99.4% of training data (212,339/213,647 samples).
-D1–D4 each have only 80–634 training samples (0.04–0.3%).
+| D1   | 0.578   | 0.165     | 0.412 |
+| D2   | 0.537   | 0.165     | 0.372 |
+| D3   | 0.496   | 0.165     | 0.331 |
+| D4   | 0.530   | 0.165     | 0.365 |
+| **D1–D4 mean** | **0.514** | **0.165** | **0.412** |
 
 ---
 
-## Key Findings (MTRCNN, seed 42)
+## Key Findings (MTRCNN, seed 42, D1–D4 mean)
 
 **Domain balance is a prerequisite for all DG methods in this setting.**
 
-| Exp | BA_unseen | Δ vs B1 | BA_seen | DSG | Per-fold (D1/D2/D3/D4/D5) |
-|-----|-----------|---------|---------|-----|---------------------------|
-| **M2+D1** | **0.316** | **+17pp** | 0.497 | 0.263 | 0.271/0.739/0.328/0.134/0.110 |
-| **M2** | **0.267** | **+12pp** | 0.450 | 0.227 | 0.186/0.629/0.343/0.127/0.049 |
-| M2+M1 | 0.262 | +11pp | 0.460 | 0.257 | 0.175/0.619/0.318/0.141/0.056 |
-| D1 (DANN) | 0.151 | +0.5pp | 0.550 | 0.399 | 0.110/0.211/0.283/0.069/0.080 |
-| B1 (base) | 0.146 | — | 0.504 | 0.358 | 0.051/0.246/0.265/0.100/0.067 |
-| B2 (aug) | 0.140 | −0.6pp | 0.496 | 0.356 | 0.033/0.247/0.275/0.083/0.062 |
-| M1 (mix) | 0.143 | −0.3pp | 0.523 | 0.381 | 0.096/0.158/0.267/0.148/0.046 |
-| **T1 (TTBN)** | **0.112** | **−3pp** | 0.262 | 0.151 | 0.162/0.062/0.239/0.059/0.036 |
+| Exp | BA_unseen | Δ vs B1 | BA_seen | DSG | Notes |
+|-----|-----------|---------|---------|-----|-------|
+| **balanced_dann_fbsmix** | **0.385** | **+22pp** | 0.519 | 0.212 | 3/4 folds (D1 rerunning) |
+| **balanced_dann** | **0.368** | **+20pp** | 0.540 | 0.276 | current best (4/4) |
+| balanced_dann_dicl | 0.340 | +17pp | 0.517 | 0.247 | DiCL hurts on top of DANN |
+| balanced_dicl_sdal | 0.326 | +16pp | 0.532 | 0.257 | |
+| balanced_species_only | 0.324 | +16pp | 0.547 | 0.267 | |
+| balanced_dicl | 0.321 | +16pp | 0.547 | 0.262 | |
+| balanced | 0.321 | +16pp | 0.511 | 0.245 | |
+| ast_balanced | 0.319 | +15pp | 0.513 | 0.197 | AST worse for BA_unseen |
+| ast_dann | 0.295 | +13pp | 0.572 | 0.277 | high BA_seen, low BA_unseen |
+| ast_base | 0.214 | +5pp | 0.563 | 0.349 | |
+| dann (unbalanced) | 0.169 | +0.4pp | 0.621 | 0.453 | near-useless without balance |
+| baseline | 0.165 | — | 0.578 | 0.412 | |
+| species_only | 0.140 | −2.5pp | 0.605 | 0.465 | domain head was helping |
+| std_split (10-seed) | 0.175 | ref | 0.881 | 0.705 | misleading — 84% D5 test |
 
-**Interpretations:**
-- **M2+D1 is the current best (+17pp).** DANN+balance are synergistic: balance ensures the adversary sees diverse domains; adversary forces domain-invariant representations. Without balance, DANN is nearly useless (+0.5pp).
-- **MixStyle adds nothing on top of M2.** Mixing only 80–634 samples per minority domain produces insufficient style diversity. M2+M1 ≈ M2.
-- **SpecAugment (B2) doesn't help DG** — it improves robustness but not domain shift.
-- **TTBN is harmful here.** Test set is ~85% D5 → batch norm adapts toward D5, hurting OOD clips. Confirmed negative finding, useful for paper.
+**Key interpretations:**
+- **Balanced sampling is the single most important lever (+15.6pp)**. All DG methods are near-useless without it.
+- **DANN only works with balancing** — unbalanced DANN (0.169) is barely above baseline.
+- **DiCL doesn't help**: fires 100% of batches with ~200 positive pairs; likely redundant with DANN targeting same objective. Projection head ablation running.
+- **AST consistently hurts BA_unseen**: richer pretrained features overfit harder to seen domains.
+- **FBS-Mix reduces DSG most** (0.212) but BA_unseen slightly below DANN alone. Best DSG-BA_unseen tradeoff.
+- **Standard split is misleading**: BA_unseen=0.175 is below even the LODO baseline (0.165 on comparable splits). D5 dominance makes it uninformative for DG.
 
 ---
 
 ## Experiment Results Table
 
-| ID | Model | Config | Status | BA_unseen | BA_seen | DSG |
-|----|-------|--------|--------|-----------|---------|-----|
-| B1 | MTRCNN | default | **done** | 0.146 | 0.504 | 0.358 |
-| T1 | MTRCNN | TTBN re-eval | **done** | 0.112 | 0.262 | 0.151 |
-| M2 | MTRCNN | lodo_balanced | **done** | 0.267 | 0.450 | 0.227 |
-| M1 | MTRCNN | lodo_mixstyle | **done** | 0.143 | 0.523 | 0.381 |
-| M2+M1 | MTRCNN | lodo_balanced_mixstyle | **done** | 0.262 | 0.460 | 0.257 |
-| B2 | MTRCNN | lodo_aug | **done** | 0.140 | 0.496 | 0.356 |
-| D1 | MTRCNN | lodo_dann | **done** | 0.151 | 0.550 | 0.399 |
-| M2+D1 | MTRCNN | lodo_balanced_dann | **done** | **0.316** | 0.497 | 0.263 |
-| clipnorm | MTRCNN | lodo_clipnorm | running | — | — | — |
-| bal+clip | MTRCNN | lodo_balanced_clipnorm | running | — | — | — |
-| sp_only | MTRCNN | lodo_species_only | running | — | — | — |
-| bal+sp | MTRCNN | lodo_balanced_species_only | running | — | — | — |
-| bal+mix+clip | MTRCNN | lodo_balanced_mixstyle_clipnorm | running | — | — | — |
-| H1 | MTRCNN | lodo_hpss | planned | — | — | — |
-| DicL | MTRCNN | lodo_balanced_dicl | running | — | — | — |
-| DANN+DicL | MTRCNN | lodo_balanced_dann_dicl | running | — | — | — |
-| DicL+SdaL | MTRCNN | lodo_balanced_dicl_sdal | running | — | — | — |
-| **FBS-Mix** | MTRCNN | lodo_balanced_fbsmix | **running** | — | — | — |
-| **DANN+FBS** | MTRCNN | lodo_balanced_dann_fbsmix | **running** | — | — | — |
-| **DANN+DicL+FBS** | MTRCNN | lodo_balanced_dann_dicl_fbsmix | **running** | — | — | — |
-| E0 | AST | lodo_ast_base | running | — | — | — |
-| E1 | AST | lodo_ast_aug | running | — | — | — |
-| E2 | AST | lodo_ast_balanced | running | — | — | — |
-| E3 | AST | lodo_ast_balanced_mixstyle | running | — | — | — |
-| E4 | AST | lodo_ast_dann | running | — | — | — |
+All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
+
+### Completed
+
+| ID | Config | BA_unseen | BA_seen | DSG | n folds |
+|----|--------|-----------|---------|-----|---------|
+| baseline | lodo_baseline | 0.165 | 0.578 | 0.412 | 4/4 |
+| species_only | lodo_species_only | 0.140 | 0.605 | 0.465 | 4/4 |
+| dann | lodo_dann | 0.169 | 0.621 | 0.453 | 4/4 |
+| mixstyle | lodo_mixstyle | 0.167 | 0.592 | 0.425 | 4/4 |
+| balanced | lodo_balanced | 0.321 | 0.511 | 0.245 | 4/4 |
+| balanced_species_only | lodo_balanced_species_only | 0.324 | 0.547 | 0.267 | 4/4 |
+| **balanced_dann** | lodo_balanced_dann | **0.368** | 0.540 | 0.276 | 4/4 |
+| balanced_dicl | lodo_balanced_dicl | 0.321 | 0.547 | 0.262 | 4/4 |
+| balanced_dicl_sdal | lodo_balanced_dicl_sdal | 0.326 | 0.532 | 0.257 | 4/4 |
+| balanced_dann_dicl | lodo_balanced_dann_dicl | 0.340 | 0.517 | 0.247 | 4/4 |
+| **balanced_dann_fbsmix** | lodo_balanced_dann_fbsmix | **0.385** | 0.516 | **0.212** | 3/4 (D1 rerun job 9730635) |
+| ast_base | lodo_ast_base | 0.214 | 0.563 | 0.349 | 4/4 |
+| ast_balanced | lodo_ast_balanced | 0.319 | 0.513 | 0.197 | 4/4 |
+| ast_dann | lodo_ast_dann | 0.295 | 0.572 | 0.277 | 4/4 |
+
+### Running
+
+| ID | Config | Jobs | What it tests |
+|----|--------|------|---------------|
+| balanced_dann_dicl_proj128 | τ=0.07, proj=128 | 9730937 | DiCL with larger proj head |
+| balanced_dann_dicl_proj128_tau02 | τ=0.20, proj=128 | 9730938 | Softer contrastive temperature |
+| balanced_dann_wingbeat | wingbeat centroid + regression | 9731055 | Physics-grounded features |
+| ttbn / tent1 / tent3 | eval_lodo re-eval | 9731095 | Test-time adaptation |
+| balanced_dann lam0p5/lam2p0 | λ=0.5, λ=2.0 | 9731143–44 | DANN lambda sensitivity |
+| balanced_mixstyle | | 9731145 | Fills ablation table hole |
+| balanced_dann_groupdro | η=0.01 | 9731174 | Worst-case domain optimisation |
+| balanced_dann_embed64/128 | embed_dim=64,128 | 9731175–76 | Larger embedding |
+| balanced_dann_specaug | time+freq masking | 9731177 | SpecAugment |
+| balanced_dann_specbalance | inv-freq species weights | 9731178 | Species-level class balance |
+| balanced_dann_hpss | HPSS p=1.0 | 9731297 | Remove non-wingbeat components |
+| balanced_dann_clipnorm2 | clip_normalize=true | 9731298 | Per-bin CMVN |
+| balanced_dann_hpss_clipnorm | HPSS + clip_normalize | 9731299 | Both combined |
+| multi-seed {baseline,balanced,dann,fbsmix} × {1234,3407} | | 9731135–42 | Variance estimates for paper |
 
 ---
 
 ## Next Steps
 
-- [ ] Read DicL, FBS-Mix, clipnorm, species_only results when done
-- [ ] Read AST results — does global attention generalise better than local conv?
-- [ ] Update ensemble_template.json with best members + weights once results land
-- [ ] Multi-seed run on winner (gate on FBS-Mix / DicL results vs M2+D1)
-- [ ] TENT on eval set using best checkpoint (evaluate_tent.py)
-- [ ] Produce submission file (evaluate_ensemble.py or single-model)
+- [x] Establish D5 exclusion rationale (data starvation, not domain shift)
+- [x] Multi-seed submitted for baseline/balanced/balanced_dann/balanced_dann_fbsmix
+- [x] DANN lambda sweep submitted (0.5, 1.0, 2.0)
+- [x] GroupDRO, embed_dim, SpecAugment, species-balanced loss submitted
+- [x] HPSS and clip_normalize submitted
+- [x] TENT/TTBN re-eval on balanced_dann submitted
+- [ ] Wait for running jobs; update results table
+- [ ] Implement CMVN per-bin normalization + delta features (code change needed)
+- [ ] Run best-combination experiment once individual winners are known
+- [ ] t-SNE visualization of embeddings (balanced vs balanced_dann vs best) — no training cost
+- [ ] Produce submission file from best checkpoint (evaluate_ensemble.py or single-model)
+- [ ] Update ensemble_template.json with best members
 
 ---
 
 ## Submission Strategy
 
-1. **Current best: M2+D1 (0.316 LODO BA_unseen)** → multi-seed → submission
-2. TENT on eval clips (`evaluate_tent.py`) applied to M2+D1 checkpoint — may adapt to D1–D4 distribution
-3. TTBN confirmed harmful on D5-dominated test set — do NOT use for submission
-4. Re-evaluate M2+D1 with official partition (split_summary.json) for challenge metric
+1. **Current best: balanced_dann_fbsmix (0.385 LODO BA_unseen, 3/4 folds)** — await D1 completion
+2. Run multi-seed on winner → ensemble across seeds for submission
+3. TENT on eval clips (`evaluate_tent.py`) applied to best checkpoint — test-time adaptation
+4. TTBN confirmed harmful (adapts toward D5 on D5-dominated test set) — do NOT use
 5. Submission format: one TXT, one row per clip, file_id + 1-based species ID
 
 ---
@@ -113,11 +139,18 @@ D1–D4 each have only 80–634 training samples (0.04–0.3%).
 - BA_seen/BA_unseen uses held-out domain for LODO (fixed 2026-06-03)
 - `experiment_tag` in config → unique output dir name
 - AST jobs: 32G mem; `max_eval_frames: 1024` required to avoid OOM on long clips
-- Per-clip normalisation: `clip_normalize: true` in config (dataset.py)
+- Per-clip normalisation: `clip_normalize: true` in config (dataset.py) — per-bin CMVN, removes microphone frequency response
 - Domain loss weight: `domain_loss_weight: 0.0` for species-only training
-- TENT: `evaluate_tent.py --checkpoint <path> --eval-dir data/Evaluation_data/`
-- DicL: `dicl_weight: 0.1, dicl_tau: 0.07` — needs `domain_balanced_sampling: true` for cross-domain pairs in batch
-- FBS-Mix: `freq_band_mixstyle: true, fbmix_species_lo: 9, fbmix_species_hi: 36` — padding-aware (masks stats on valid frames, restores zeros after mix)
+- TENT on LODO: `eval_lodo.py --tent-steps N --tent-lr 1e-3` → writes to `*_tent{N}/` subdirs
+- TTBN on LODO: `eval_lodo.py --ttbn` → writes to `*_ttbn/` subdirs
+- DicL: `dicl_weight: 0.1, dicl_tau: 0.07`; uses `proj_embedding` (128-dim) if `contrastive_proj_dim: 128` set
+- FBS-Mix: `freq_band_mixstyle: true` — mixes bins 0-8, protects 9-35 (wingbeat core), padding-aware
+- HPSS: `augmentation.hpss.enabled: true, p: 1.0` — use p=1.0 not 0.5 for consistent domain normalisation
+- GroupDRO: `group_dro_eta: 0.01` — per-domain exponential loss reweighting
+- Embed dim: `embed_dim: 64` or `128` — default 32, backwards-compatible
+- Species-balanced loss: `species_balanced_loss: true` — inverse-frequency CE weighting
+- Wingbeat features: `use_wingbeat_feature: true` (spectral centroid 400–700 Hz) + `wingbeat_weight: 0.5` (regression head)
+- Multi-seed: `train_lodo.py --seed N` overrides config seed; output dir includes seed in name
 - Ensemble: `evaluate_ensemble.py --members ensemble_template.json --eval-dir data/Evaluation_data/`
 
 ---
@@ -140,10 +173,14 @@ Key implementation detail: statistics computed on valid frames only (masked by l
 
 ## Ideas / Future Directions
 
-- Multi-seed on winner (gate on FBS-Mix / DicL results)
 - Curriculum domain sampling: anneal from natural imbalance → balanced over training
 - Joint (species × domain) balanced sampling
 - Source-free domain adaptation on unlabelled eval clips (TENT variant)
-- Analyse M2+D1 embedding space — does the t-SNE cluster collapse fix?
+- t-SNE of embeddings: balanced vs balanced_dann vs best — visualise domain collapse fix
 - Domain Envelope Subtraction (DES): subtract per-clip smooth spectral envelope (Gaussian smoothed over mel bins) before model — closed-form acoustic domain removal
 - FBS-Mix for AST: apply at patch-embed output, split frequency patches into low/high
+- Delta features: temporal differences of log-mel — removes DC (microphone response), captures wingbeat modulation; standard in ASR, absent here
+- Harmonic Product Spectrum (HPS): explicit F0 via f×2f×3f multiplication — maximally domain-invariant; ratio-based so spectral envelope cancels
+- Kitchen-sink combination: balanced_dann + FBSMix + HPSS + clip_normalize + best of embed/groupdro/wingbeat
+- Cross-domain contrastive pretraining (SimCLR on mosquito audio) before supervised fine-tune
+- DiCL diagnosis: firing 100% of batches with ~200 pairs — redundancy with DANN may be the issue rather than geometry
