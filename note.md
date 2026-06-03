@@ -25,3 +25,24 @@
 - Domain-balanced sampling (`framework/utilization.py`): WeightedRandomSampler, weight[i]=1/count(domain[i]). D1-D4 upweighted ~200×. Config: `domain_balanced_sampling: true`.
 - TTBN (`framework/engine.py`): after model.eval(), selectively sets BN layers back to training=True so they use batch stats at test time. Applied only to test split (not val loop). Config: `ttbn: true`. T1 = run evaluate.py with ttbn=true on B1 checkpoints — costs nothing.
 
+## 2026-06-03
+
+- LODO BA_seen/BA_unseen bug fixed: `evaluate.py` was using static `split_summary.json` unseen_domain_by_species for all folds — inverted D5 fold metrics entirely. Fixed by passing `lodo_held_out_domain` to `append_official_metrics`, partitioning by domain label directly.
+- [B1] Corrected LODO baseline (seed 42): mean BA_unseen=0.146, BA_seen=0.504, DSG=0.358. Per-fold BA_unseen: D1=0.051, D2=0.246, D3=0.265, D4=0.100, D5=0.067.
+- D5 = 99.4% of training data (212,339/213,647). D1–D4 have only 80–634 training samples each. Root cause of all DG failures.
+- Eval set: 15,573 clips, ~85% D5-like by nearest-centroid in log-mel space. Challenge metric dominated by D5; LODO is the honest DG measure.
+- AST bug fixed: `MAX_TIME_PATCHES=128` (1024 frames max) insufficient for LODO val/test clips up to 15k frames. Fixed in `ast_model.py` forward(): generate 2D sinusoidal pos embeddings on-the-fly when clip exceeds precomputed table. Short clips use cached buffer.
+- [T1] TTBN harmful: BA_unseen 0.146→0.112 (−3pp). Test set is ~85% D5 → batch norm adapts toward D5 at inference, hurting OOD clips. Confirmed negative result.
+- [M2] Domain-balanced sampling: BA_unseen=0.267 (+12pp). Structural fix. WeightedRandomSampler upsamples D1–D4 ~200–2600× to equalise domain frequency per epoch.
+- [M1] MixStyle alone: BA_unseen=0.143 (−0.3pp, null). Without balance, mixes D5 with D5 ~99% — useless for DG.
+- [M2+M1] Balanced+MixStyle: BA_unseen=0.262 (+11pp). MixStyle adds nothing on top of M2. 80–634 samples per minority domain too few for meaningful style synthesis.
+- [D1] DANN alone: BA_unseen=0.151 (+0.5pp). Adversary learns D5 vs not-D5 only; nearly useless without domain diversity.
+- [M2+D1] Balanced+DANN: BA_unseen=0.316 (+17pp) — current best. Synergistic: balance provides diverse domain signal for adversary; adversary enforces domain-invariant embeddings. D2: 0.246→0.739, D1: 0.051→0.271.
+- [B2] SpecAugment+noise: BA_unseen=0.140 (−0.6pp). Augmentation improves robustness but not domain shift.
+- Key research finding: domain balance is prerequisite for DG methods in severely imbalanced settings. DANN/MixStyle effectively disabled without it.
+- Per-clip instance normalisation (`framework/dataset.py:clip_instance_normalize`): subtracts per-bin temporal mean and std. Removes recording-level spectral coloring. Config: `clip_normalize: true`.
+- TENT implemented (`framework/tent.py`): freeze all, unfreeze BN/LN affine (γ, β), minimise prediction entropy on unlabelled eval clips. MTRCNN: 10 BN layers, 800 params. AST: 9 LN layers, 3456 params. Script: `evaluate_tent.py`.
+- `domain_loss_weight` added to `train_one_epoch()` (default 1.0). Set 0.0 for species-only ablation — tests whether domain supervision hurts under severe imbalance.
+- t-SNE (logit-space, 9-dim) of B1 embeddings: D1–D4 collapse to isolated corner, completely separate from D5 cloud. Model routes all OOD samples to same region — structured wrong predictions, not uncertainty.
+- `experiment_tag` in config appended to output dir name to prevent collisions across DG variants sharing same hyperparams.
+
