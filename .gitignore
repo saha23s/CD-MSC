@@ -1,8 +1,10 @@
 data/
-Development_data/
+Development_data
 outputs/
 sbatch/
+.claude/
 __pycache__/
 *.pyc
 *.pth
 logs/
+job_log.md
