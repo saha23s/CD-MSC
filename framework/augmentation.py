@@ -282,3 +282,85 @@ def mixup_batch(
     perm = torch.randperm(features.size(0), device=features.device)
     mixed = lam * features + (1.0 - lam) * features[perm]
     return mixed, species_labels, species_labels[perm], domain_labels, domain_labels[perm], lam
+
+
+# ---------------------------------------------------------------------------
+# Batch-level: Frequency-Band Selective Mix (FBS-Mix)
+# ---------------------------------------------------------------------------
+
+def fbs_mix_batch(
+    features: torch.Tensor,
+    species_lo: int = 9,
+    species_hi: int = 36,
+    alpha: float = 0.1,
+    p: float = 0.5,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Frequency-Band Selective Mix: mix domain-informative bins, protect species bins.
+
+    Empirical motivation (mosquito wingbeat data, test split):
+      Bins  0–8:  species/domain ratio 0.30–0.93  → domain-dominated
+      Bins  9–35: species/domain ratio 1.50–4.12  → species-dominated (wingbeat)
+      Bins 36–63: ratio 0.73–1.47                 → mixed/unclear
+
+    Standard MixStyle (applied inside the CNN to all channels) mixes across all
+    mel-bin information indiscriminately, corrupting the wingbeat signal (bins 9-35)
+    while providing diversity in the domain-noise bands (bins 0-8). The net effect
+    is approximately zero, explaining why M2+MixStyle ≈ M2 in LODO experiments.
+
+    FBS-Mix applies instance-stat mixing ONLY to the domain-dominated low-frequency
+    band (bins 0 to species_lo-1), while leaving the species-discriminative wingbeat
+    core (bins species_lo to species_hi-1) and the mixed high-frequency region
+    (bins species_hi onward) completely untouched.
+
+    Operates on raw input spectrograms [B, T, F] before the model, as a batch-level
+    transform (analogous to Mixup in the training loop). No architecture changes.
+    No inference overhead — skipped when not training.
+
+    Args:
+        features:   padded log-mel batch  [B, T, F].
+        species_lo: first bin of the species-dominated zone (default 9).
+        species_hi: one past the last species-dominated bin (default 36).
+        alpha:      Beta concentration for mixing coefficient; lower = subtler mixing.
+        p:          probability of applying per batch.
+        eps:        variance floor for numerical stability.
+
+    Returns:
+        features with bins 0:species_lo style-mixed across random pairs.  [B, T, F]
+    """
+    import random as _random
+    if _random.random() > p:
+        return features
+    B = features.size(0)
+    if B < 2 or species_lo <= 0:
+        return features
+
+    lam  = float(torch.distributions.Beta(alpha, alpha).sample())
+    perm = torch.randperm(B, device=features.device)
+
+    out  = features.clone()
+    band = out[:, :, :species_lo]                              # [B, T, species_lo]
+
+    # Per-sample instance statistics over the time dimension
+    mu  = band.mean(dim=1, keepdim=True)                       # [B, 1, species_lo]
+    sig = (band.var(dim=1, keepdim=True) + eps).sqrt()         # [B, 1, species_lo]
+
+    # Normalise, then re-scale with mixed statistics
+    mu_mix  = lam * mu  + (1.0 - lam) * mu[perm]
+    sig_mix = lam * sig + (1.0 - lam) * sig[perm]
+    out[:, :, :species_lo] = (band - mu) / sig * sig_mix + mu_mix
+
+    return out
+
+
+def build_fbs_mix_fn(config: dict):
+    """Return an fbs_mix_batch callable from config, or None if disabled."""
+    if not config.get("freq_band_mixstyle", False):
+        return None
+    lo    = config.get("fbmix_species_lo",  9)
+    hi    = config.get("fbmix_species_hi",  36)
+    alpha = config.get("fbmix_alpha",        0.1)
+    p     = config.get("fbmix_p",            0.5)
+    def _fn(features: torch.Tensor) -> torch.Tensor:
+        return fbs_mix_batch(features, species_lo=lo, species_hi=hi, alpha=alpha, p=p)
+    return _fn

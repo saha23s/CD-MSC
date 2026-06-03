@@ -175,6 +175,7 @@ def train_one_epoch(
     optimizer,
     device,
     mixup_fn=None,
+    fbs_mix_fn=None,
     grl_lambda=None,
     domain_loss_weight: float = 1.0,
     dicl_weight: float = 0.0,
@@ -208,6 +209,10 @@ def train_one_epoch(
         lengths = batch["lengths"].to(device)
         species_labels = batch["species_labels"].to(device)
         domain_labels = batch["domain_labels"].to(device)
+
+        # FBS-Mix: frequency-band selective style mixing (input-level, before model)
+        if fbs_mix_fn is not None:
+            features = fbs_mix_fn(features)
 
         if mixup_fn is not None:
             features, sp_a, sp_b, dom_a, dom_b, lam = mixup_fn(features, species_labels, domain_labels)

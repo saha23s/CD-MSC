@@ -24,7 +24,7 @@ import torch
 from torch.optim import AdamW
 
 from evaluate import evaluate_checkpoint, save_prediction_rows
-from framework.augmentation import build_augmentation_pipeline, mixup_batch
+from framework.augmentation import build_augmentation_pipeline, build_fbs_mix_fn, mixup_batch
 from framework.config import config_signature, load_config
 from framework.gradient_reversal import dann_lambda
 from framework.utilization import make_balanced_sampler, get_domain_labels
@@ -256,10 +256,16 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             (lambda f, sp, dom: mixup_batch(f, sp, dom, alpha=mixup_cfg.get("alpha", 0.4)))
             if mixup_cfg.get("enabled", False) else None
         )
+        fbs_mix_fn   = build_fbs_mix_fn(config)
         if aug_pipeline:
             logger.info("Augmentation pipeline: %s", aug_pipeline)
         if mixup_cfg.get("enabled", False):
             logger.info("Mixup enabled with alpha=%.2f", mixup_cfg.get("alpha", 0.4))
+        if fbs_mix_fn:
+            logger.info("FBS-Mix enabled: mix bins 0-%d, protect bins %d-%d",
+                        config.get("fbmix_species_lo", 9) - 1,
+                        config.get("fbmix_species_lo", 9),
+                        config.get("fbmix_species_hi", 36) - 1)
 
         # ---- datasets & loaders ---------------------------------------------
         n_train_frames = max_train_frames(config)
@@ -315,7 +321,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             grl_lam = dann_lambda(epoch, total_epochs, lambda_max) if use_dann else None
             train_metrics = train_one_epoch(
                 model=model, dataloader=train_loader, optimizer=optimizer, device=device,
-                mixup_fn=mixup_fn, grl_lambda=grl_lam,
+                mixup_fn=mixup_fn, fbs_mix_fn=fbs_mix_fn, grl_lambda=grl_lam,
                 domain_loss_weight=config.get("domain_loss_weight", 1.0),
                 dicl_weight=config.get("dicl_weight", 0.0),
                 dicl_tau=config.get("dicl_tau", 0.07),
