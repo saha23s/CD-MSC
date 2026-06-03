@@ -1,0 +1,20 @@
+[
+  {
+    "label": "MTRCNN balanced+DANN",
+    "config": "configs/lodo_balanced_dann.json",
+    "checkpoint": "outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5_balanced_dann/model/model_best.pth",
+    "weight": 1.0
+  },
+  {
+    "label": "MTRCNN balanced+DicL",
+    "config": "configs/lodo_balanced_dicl.json",
+    "checkpoint": "outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5_balanced_dicl/model/model_best.pth",
+    "weight": 1.0
+  },
+  {
+    "label": "MTRCNN balanced+DANN+DicL",
+    "config": "configs/lodo_balanced_dann_dicl.json",
+    "checkpoint": "outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5_balanced_dann_dicl/model/model_best.pth",
+    "weight": 1.0
+  }
+]
