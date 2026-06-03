@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 from torch.optim import AdamW
 
-from framework.augmentation import build_augmentation_pipeline, mixup_batch
+from framework.augmentation import build_augmentation_pipeline, build_fbs_mix_fn, mixup_batch
 from framework.gradient_reversal import dann_lambda
 from framework.utilization import make_balanced_sampler, get_domain_labels
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
@@ -40,6 +40,7 @@ from framework.utilization import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train mosquito classifier.")
     parser.add_argument("--config", type=str, default="configs/default_experiment.json")
+    parser.add_argument("--seed", type=int, default=None, help="Override seed in config.")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -49,7 +50,9 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     epochs = int(config["epochs"])
     min_epoch = int(config.get("early_stopping_min_epoch", 10))
     patience = int(config.get("early_stopping_patience", 10))
-    return f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    tag = config.get("experiment_tag", "")
+    suffix = f"_{tag}" if tag else ""
+    return f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}{suffix}"
 
 
 def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: Path, model_name: str) -> dict:
@@ -169,6 +172,8 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             (lambda f, sp, dom: mixup_batch(f, sp, dom, alpha=mixup_cfg.get("alpha", 0.4)))
             if mixup_cfg.get("enabled", False) else None
         )
+        fbs_mix_fn   = build_fbs_mix_fn(config)
+        clip_norm    = config.get("clip_normalize", False)
 
         train_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "training"),
@@ -176,6 +181,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             max_train_frames=max_train_frames(config),
             training=True,
             normalize_features=config["normalize_features"],
+            clip_normalize=clip_norm,
             expected_feature_signature=expected_training_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
             augment=aug_pipeline,
@@ -186,6 +192,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             max_train_frames=None,
             training=False,
             normalize_features=config["normalize_features"],
+            clip_normalize=clip_norm,
             expected_feature_signature=expected_validation_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
         )
@@ -201,6 +208,28 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn, sampler=sampler)
         eval_batch_size = config.get("eval_batch_size", config["batch_size"])
         val_loader = make_loader(val_dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)
+
+        # Species inverse-frequency loss weights (optional)
+        species_loss_weight = None
+        if config.get("species_balanced_loss", False):
+            from collections import Counter
+            from framework.metadata import SPECIES_NAMES
+            counts = Counter(item["species_label"] for item in train_dataset.samples)
+            w = torch.tensor(
+                [1.0 / max(counts.get(i, 1), 1) for i in range(len(SPECIES_NAMES))],
+                dtype=torch.float32, device=device,
+            )
+            species_loss_weight = w / w.sum() * len(SPECIES_NAMES)
+
+        # GroupDRO (optional)
+        from framework.group_dro import GroupDROState
+        from framework.metadata import DOMAIN_NAMES
+        group_dro_state = None
+        if config.get("group_dro_eta", 0.0) > 0:
+            group_dro_state = GroupDROState(
+                num_domains=len(DOMAIN_NAMES),
+                eta=config["group_dro_eta"],
+            ).to(device)
 
         model = build_model(config, device)
         optimizer = AdamW(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
@@ -224,7 +253,16 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 optimizer=optimizer,
                 device=device,
                 mixup_fn=mixup_fn,
+                fbs_mix_fn=fbs_mix_fn,
                 grl_lambda=grl_lam,
+                domain_loss_weight=config.get("domain_loss_weight", 1.0),
+                dicl_weight=config.get("dicl_weight", 0.0),
+                dicl_tau=config.get("dicl_tau", 0.07),
+                sdal_weight=config.get("sdal_weight", 0.0),
+                sdal_sigma=config.get("sdal_sigma", 1.0),
+                wingbeat_weight=config.get("wingbeat_weight", 0.0),
+                group_dro_state=group_dro_state,
+                species_loss_weight=species_loss_weight,
             )
             val_metrics = evaluate_model(
                 model=model,
@@ -316,6 +354,8 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
+    if args.seed is not None:
+        config["seed"] = args.seed
     result = train_experiment(config, overwrite=args.overwrite)
     if result["status"] == "running":
         return
