@@ -188,4 +188,5 @@ class MTRCNNClassifier(nn.Module):
         return {
             "species_logits": self.species_classifier(embedding),
             "domain_logits":  self.domain_classifier(domain_input),
+            "embedding":      embedding,
         }

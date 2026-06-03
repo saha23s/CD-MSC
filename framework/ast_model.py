@@ -265,11 +265,12 @@ class ASTClassifier(nn.Module):
         x = self.norm(x)
 
         # ---- classification heads on CLS token ------------------------------
-        cls_out     = x[:, 0]
+        cls_out      = x[:, 0]
         domain_input = self.grl(cls_out) if self.grl is not None else cls_out
         return {
             "species_logits": self.species_head(cls_out),
             "domain_logits":  self.domain_head(domain_input),
+            "embedding":      cls_out,
         }
 
 

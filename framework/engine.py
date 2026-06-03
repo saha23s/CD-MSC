@@ -11,6 +11,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from framework.losses import domain_invariant_contrastive_loss, species_conditional_mmd_loss
+
 
 def balanced_accuracy(preds: torch.Tensor, labels: torch.Tensor, num_classes: int) -> float:
     """Mean recall over classes present in the evaluation set."""
@@ -167,7 +169,19 @@ def evaluate_model(
     return metrics
 
 
-def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None, grl_lambda=None, domain_loss_weight: float = 1.0) -> dict:
+def train_one_epoch(
+    model,
+    dataloader,
+    optimizer,
+    device,
+    mixup_fn=None,
+    grl_lambda=None,
+    domain_loss_weight: float = 1.0,
+    dicl_weight: float = 0.0,
+    dicl_tau: float = 0.07,
+    sdal_weight: float = 0.0,
+    sdal_sigma: float = 1.0,
+) -> dict:
     """Train for one epoch.
 
     Args:
@@ -208,6 +222,21 @@ def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None, grl_lam
         species_loss = lam * F.cross_entropy(species_logits, sp_a) + (1.0 - lam) * F.cross_entropy(species_logits, sp_b)
         domain_loss  = lam * F.cross_entropy(domain_logits,  dom_a) + (1.0 - lam) * F.cross_entropy(domain_logits,  dom_b)
         loss = species_loss + domain_loss_weight * domain_loss
+
+        # DicL / SdaL operate on the raw (non-mixed) labels and embeddings.
+        # Skip when mixup is active — mixed labels break contrastive pairing.
+        if (dicl_weight > 0 or sdal_weight > 0) and mixup_fn is None:
+            emb = outputs.get("embedding")
+            if emb is not None:
+                if dicl_weight > 0:
+                    loss = loss + dicl_weight * domain_invariant_contrastive_loss(
+                        emb, species_labels, domain_labels, tau=dicl_tau
+                    )
+                if sdal_weight > 0:
+                    loss = loss + sdal_weight * species_conditional_mmd_loss(
+                        emb, species_labels, domain_labels, sigma=sdal_sigma
+                    )
+
         loss.backward()
         optimizer.step()
 

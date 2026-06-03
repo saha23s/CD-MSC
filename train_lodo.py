@@ -315,6 +315,10 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
                 model=model, dataloader=train_loader, optimizer=optimizer, device=device,
                 mixup_fn=mixup_fn, grl_lambda=grl_lam,
                 domain_loss_weight=config.get("domain_loss_weight", 1.0),
+                dicl_weight=config.get("dicl_weight", 0.0),
+                dicl_tau=config.get("dicl_tau", 0.07),
+                sdal_weight=config.get("sdal_weight", 0.0),
+                sdal_sigma=config.get("sdal_sigma", 1.0),
             )
             val_metrics = evaluate_model(
                 model=model,
