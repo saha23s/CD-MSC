@@ -69,6 +69,7 @@ class MosquitoFeatureDataset(Dataset):
         feature_pickle_path: Union[str, Path],
         feature_stats_path: Optional[Union[str, Path]] = None,
         max_train_frames: Optional[int] = None,
+        max_eval_frames: Optional[int] = None,
         training: bool = False,
         normalize_features: bool = True,
         clip_normalize: bool = False,
@@ -81,6 +82,7 @@ class MosquitoFeatureDataset(Dataset):
         self.samples = payload["items"]
         self.training = training
         self.max_train_frames = max_train_frames
+        self.max_eval_frames = max_eval_frames
         self.normalize_features = normalize_features and feature_stats_path is not None
         self.clip_normalize = clip_normalize
         self.feature_mean = None
@@ -94,10 +96,16 @@ class MosquitoFeatureDataset(Dataset):
         return len(self.samples)
 
     def _maybe_crop(self, feature: np.ndarray) -> np.ndarray:
-        if not self.training or not self.max_train_frames or feature.shape[0] <= self.max_train_frames:
-            return feature
-        start = random.randint(0, feature.shape[0] - self.max_train_frames)
-        return feature[start : start + self.max_train_frames]
+        if self.training and self.max_train_frames and feature.shape[0] > self.max_train_frames:
+            start = random.randint(0, feature.shape[0] - self.max_train_frames)
+            return feature[start : start + self.max_train_frames]
+        if not self.training and self.max_eval_frames and feature.shape[0] > self.max_eval_frames:
+            # Centre-crop: preserves the wingbeat-rich middle of long clips
+            mid   = feature.shape[0] // 2
+            half  = self.max_eval_frames // 2
+            start = max(0, mid - half)
+            return feature[start : start + self.max_eval_frames]
+        return feature
 
     def _normalize(self, feature: np.ndarray) -> np.ndarray:
         if not self.normalize_features:
@@ -140,6 +148,7 @@ class LodoFeatureDataset(Dataset):
         max_train_frames: Optional[int],
         training: bool,
         normalize_features: bool,
+        max_eval_frames: Optional[int] = None,
         clip_normalize: bool = False,
         augment: Optional[Callable] = None,
     ) -> None:
@@ -147,6 +156,7 @@ class LodoFeatureDataset(Dataset):
         self.feature_mean = feature_mean
         self.feature_std = feature_std
         self.max_train_frames = max_train_frames
+        self.max_eval_frames = max_eval_frames
         self.training = training
         self.normalize_features = normalize_features and feature_mean is not None
         self.clip_normalize = clip_normalize
@@ -155,13 +165,21 @@ class LodoFeatureDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
+    def _maybe_crop(self, feature: np.ndarray) -> np.ndarray:
+        if self.training and self.max_train_frames and feature.shape[0] > self.max_train_frames:
+            start = random.randint(0, feature.shape[0] - self.max_train_frames)
+            return feature[start : start + self.max_train_frames]
+        if not self.training and self.max_eval_frames and feature.shape[0] > self.max_eval_frames:
+            mid   = feature.shape[0] // 2
+            half  = self.max_eval_frames // 2
+            start = max(0, mid - half)
+            return feature[start : start + self.max_eval_frames]
+        return feature
+
     def __getitem__(self, index: int) -> Dict:
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)          # [T, n_mels]
-
-        if self.training and self.max_train_frames and feature.shape[0] > self.max_train_frames:
-            start = random.randint(0, feature.shape[0] - self.max_train_frames)
-            feature = feature[start : start + self.max_train_frames]
+        feature = self._maybe_crop(feature)
 
         if self.clip_normalize:
             feature = clip_instance_normalize(feature)

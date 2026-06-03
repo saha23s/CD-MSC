@@ -88,6 +88,7 @@ def eval_fold(config: Dict, fold: str, overwrite: bool, ttbn: bool = False) -> N
         feature_mean=feature_mean,
         feature_std=feature_std,
         max_train_frames=None,
+        max_eval_frames=config.get("max_eval_frames", None),
         training=False,
         normalize_features=config["normalize_features"],
         clip_normalize=config.get("clip_normalize", False),

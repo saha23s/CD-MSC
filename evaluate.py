@@ -125,6 +125,7 @@ def evaluate_checkpoint(
         feature_pickle_path=split_feature_path(config, split),
         feature_stats_path=training_stats_path(config),
         max_train_frames=None,
+        max_eval_frames=config.get("max_eval_frames", None),
         training=False,
         normalize_features=config["normalize_features"],
         clip_normalize=config.get("clip_normalize", False),
