@@ -127,6 +127,7 @@ def evaluate_checkpoint(
         max_train_frames=None,
         training=False,
         normalize_features=config["normalize_features"],
+        clip_normalize=config.get("clip_normalize", False),
         expected_feature_signature=expected_feature_signature,
         expected_stats_signature=expected_training_stats_signature,
     )

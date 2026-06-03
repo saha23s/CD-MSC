@@ -90,6 +90,7 @@ def eval_fold(config: Dict, fold: str, overwrite: bool, ttbn: bool = False) -> N
         max_train_frames=None,
         training=False,
         normalize_features=config["normalize_features"],
+        clip_normalize=config.get("clip_normalize", False),
     )
     val_loader = make_loader(
         val_dataset,

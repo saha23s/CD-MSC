@@ -167,7 +167,7 @@ def evaluate_model(
     return metrics
 
 
-def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None, grl_lambda=None) -> dict:
+def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None, grl_lambda=None, domain_loss_weight: float = 1.0) -> dict:
     """Train for one epoch.
 
     Args:
@@ -207,7 +207,7 @@ def train_one_epoch(model, dataloader, optimizer, device, mixup_fn=None, grl_lam
 
         species_loss = lam * F.cross_entropy(species_logits, sp_a) + (1.0 - lam) * F.cross_entropy(species_logits, sp_b)
         domain_loss  = lam * F.cross_entropy(domain_logits,  dom_a) + (1.0 - lam) * F.cross_entropy(domain_logits,  dom_b)
-        loss = species_loss + domain_loss
+        loss = species_loss + domain_loss_weight * domain_loss
         loss.backward()
         optimizer.step()
 

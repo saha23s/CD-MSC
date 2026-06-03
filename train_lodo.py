@@ -263,6 +263,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
 
         # ---- datasets & loaders ---------------------------------------------
         n_train_frames = max_train_frames(config)
+        clip_norm = config.get("clip_normalize", False)
         train_dataset  = LodoFeatureDataset(
             items=train_items,
             feature_mean=feature_mean,
@@ -270,6 +271,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             max_train_frames=n_train_frames,
             training=True,
             normalize_features=config["normalize_features"],
+            clip_normalize=clip_norm,
             augment=aug_pipeline,
         )
         val_dataset = LodoFeatureDataset(
@@ -279,6 +281,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             max_train_frames=None,
             training=False,
             normalize_features=config["normalize_features"],
+            clip_normalize=clip_norm,
         )
         sampler = (
             make_balanced_sampler(get_domain_labels(train_dataset))
@@ -311,6 +314,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             train_metrics = train_one_epoch(
                 model=model, dataloader=train_loader, optimizer=optimizer, device=device,
                 mixup_fn=mixup_fn, grl_lambda=grl_lam,
+                domain_loss_weight=config.get("domain_loss_weight", 1.0),
             )
             val_metrics = evaluate_model(
                 model=model,
