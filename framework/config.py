@@ -22,7 +22,8 @@ FEATURE_CONFIG_KEYS = [
     "n_mels",
     "fmin",
     "fmax",
-    "use_delta",
+    # use_delta is intentionally excluded: delta experiments use a separate
+    # feature_root directory, so the path itself provides isolation.
 ]
 
 
