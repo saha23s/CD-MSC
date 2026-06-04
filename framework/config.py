@@ -42,7 +42,8 @@ def resolve_config(config: Dict) -> Dict:
     config["win_length"] = max(1, int(math.floor(1024 * (sample_rate / 16000))))
     config["hop_length"] = max(1, int(math.floor(160 * (sample_rate / 16000))))
     config["n_fft"] = config["win_length"]
-    if config.get("use_delta", False):
+    config.setdefault("use_delta", False)  # ensure key present for config_subset/signature
+    if config["use_delta"]:
         config["n_mels"] = 64 * 2  # delta appended along freq axis → model input is 128-dim
     return config
 
