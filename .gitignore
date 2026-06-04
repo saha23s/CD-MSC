@@ -8,3 +8,4 @@ __pycache__/
 *.pth
 logs/
 job_log.md
+.ipynb_checkpoints/
