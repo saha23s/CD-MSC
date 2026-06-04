@@ -306,7 +306,6 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         species_loss_weight = None
         if config.get("species_balanced_loss", False):
             from collections import Counter
-            from framework.metadata import SPECIES_NAMES
             counts = Counter(item["species_label"] for item in train_dataset.samples)
             w = torch.tensor(
                 [1.0 / max(counts.get(i, 1), 1) for i in range(len(SPECIES_NAMES))],
@@ -316,7 +315,6 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
 
         # ---- GroupDRO state (optional) --------------------------------------
         from framework.group_dro import GroupDROState
-        from framework.metadata import DOMAIN_NAMES
         group_dro_state = None
         if config.get("group_dro_eta", 0.0) > 0:
             group_dro_state = GroupDROState(
