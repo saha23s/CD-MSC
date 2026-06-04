@@ -36,7 +36,7 @@ def build_feature_extractor(config: dict, device: torch.device) -> LogMelSpectro
         n_fft=config["n_fft"],
         hop_length=config["hop_length"],
         win_length=config["win_length"],
-        n_mels=config["n_mels"],
+        n_mels=config["n_mels_filterbank"],  # always 64; n_mels may be 128 with use_delta
         fmin=config["fmin"],
         fmax=config["fmax"],
     ).to(device)

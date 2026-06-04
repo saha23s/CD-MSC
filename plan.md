@@ -3,7 +3,7 @@
 **Challenge:** Cross-Domain Mosquito Species Classification  
 **Primary metric:** `species_balanced_accuracy` on unseen domains (LODO BA_unseen)  
 **DSG** (`|BA_unseen - BA_seen|`) — lower is better  
-**Baseline (10-seed, official partition):** BA_seen=0.881, BA_unseen=0.175, DSG=0.705
+**Baseline (10-seed, official partition):** BA_seen=0.881, BA_unseen=0.175±0.020, DSG=0.706±0.025
 
 ---
 
@@ -37,9 +37,12 @@ All DG experiments use **LODO (Leave-One-Domain-Out)** as the evaluation:
 
 | Exp | BA_unseen | Δ vs B1 | BA_seen | DSG | Notes |
 |-----|-----------|---------|---------|-----|-------|
-| **balanced_dann_fbsmix** | **0.385** | **+22pp** | 0.519 | 0.212 | 3/4 folds (D1 rerunning) |
-| **balanced_dann** | **0.368** | **+20pp** | 0.540 | 0.276 | current best (4/4) |
-| balanced_dann_dicl | 0.340 | +17pp | 0.517 | 0.247 | DiCL hurts on top of DANN |
+| **balanced_dann_dicl_proj128_tau02** | **0.378** | **+21pp** | 0.534 | **0.202** | best DSG; τ=0.2 proj=128 |
+| balanced_dann_dicl_proj128 | 0.371 | +21pp | 0.540 | 0.235 | |
+| **balanced_dann_fbsmix** | **0.345** | **+18pp** | 0.516 | **0.229** | 4/4 folds now complete |
+| **balanced_dann** | **0.368** | **+20pp** | 0.540 | 0.276 | strong overall |
+| balanced_dann_wingbeat | 0.339 | +17pp | 0.533 | 0.249 | |
+| balanced_dann_dicl | 0.340 | +17pp | 0.517 | 0.247 | |
 | balanced_dicl_sdal | 0.326 | +16pp | 0.532 | 0.257 | |
 | balanced_species_only | 0.324 | +16pp | 0.547 | 0.267 | |
 | balanced_dicl | 0.321 | +16pp | 0.547 | 0.262 | |
@@ -50,7 +53,7 @@ All DG experiments use **LODO (Leave-One-Domain-Out)** as the evaluation:
 | dann (unbalanced) | 0.169 | +0.4pp | 0.621 | 0.453 | near-useless without balance |
 | baseline | 0.165 | — | 0.578 | 0.412 | |
 | species_only | 0.140 | −2.5pp | 0.605 | 0.465 | domain head was helping |
-| std_split (10-seed) | 0.175 | ref | 0.881 | 0.705 | misleading — 84% D5 test |
+| std_split (10-seed) | 0.175 | ref | 0.881 | 0.706±0.025 | misleading — 84% D5 test |
 
 **Key interpretations:**
 - **Balanced sampling is the single most important lever (+15.6pp)**. All DG methods are near-useless without it.
@@ -80,7 +83,10 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 | balanced_dicl | lodo_balanced_dicl | 0.321 | 0.547 | 0.262 | 4/4 |
 | balanced_dicl_sdal | lodo_balanced_dicl_sdal | 0.326 | 0.532 | 0.257 | 4/4 |
 | balanced_dann_dicl | lodo_balanced_dann_dicl | 0.340 | 0.517 | 0.247 | 4/4 |
-| **balanced_dann_fbsmix** | lodo_balanced_dann_fbsmix | **0.385** | 0.516 | **0.212** | 3/4 (D1 rerun job 9730635) |
+| balanced_dann_dicl_proj128 | lodo_balanced_dann_dicl_proj128 | 0.371 | 0.540 | 0.235 | 4/4 |
+| **balanced_dann_dicl_proj128_tau02** | lodo_balanced_dann_dicl_proj128_tau02 | **0.378** | 0.534 | **0.202** | 4/4 ← best |
+| balanced_dann_wingbeat | lodo_balanced_dann_wingbeat | 0.339 | 0.533 | 0.249 | 4/4 |
+| **balanced_dann_fbsmix** | lodo_balanced_dann_fbsmix | **0.345** | 0.516 | 0.229 | 4/4 |
 | ast_base | lodo_ast_base | 0.214 | 0.563 | 0.349 | 4/4 |
 | ast_balanced | lodo_ast_balanced | 0.319 | 0.513 | 0.197 | 4/4 |
 | ast_dann | lodo_ast_dann | 0.295 | 0.572 | 0.277 | 4/4 |
@@ -89,20 +95,14 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 
 | ID | Config | Jobs | What it tests |
 |----|--------|------|---------------|
-| balanced_dann_dicl_proj128 | τ=0.07, proj=128 | 9730937 | DiCL with larger proj head |
-| balanced_dann_dicl_proj128_tau02 | τ=0.20, proj=128 | 9730938 | Softer contrastive temperature |
-| balanced_dann_wingbeat | wingbeat centroid + regression | 9731055 | Physics-grounded features |
-| ttbn / tent1 / tent3 | eval_lodo re-eval | 9731095 | Test-time adaptation |
-| balanced_dann lam0p5/lam2p0 | λ=0.5, λ=2.0 | 9731143–44 | DANN lambda sensitivity |
-| balanced_mixstyle | | 9731145 | Fills ablation table hole |
-| balanced_dann_groupdro | η=0.01 | 9731174 | Worst-case domain optimisation |
-| balanced_dann_embed64/128 | embed_dim=64,128 | 9731175–76 | Larger embedding |
-| balanced_dann_specaug | time+freq masking | 9731177 | SpecAugment |
-| balanced_dann_specbalance | inv-freq species weights | 9731178 | Species-level class balance |
-| balanced_dann_hpss | HPSS p=1.0 | 9731297 | Remove non-wingbeat components |
-| balanced_dann_clipnorm2 | clip_normalize=true | 9731298 | Per-bin CMVN |
-| balanced_dann_hpss_clipnorm | HPSS + clip_normalize | 9731299 | Both combined |
-| multi-seed {baseline,balanced,dann,fbsmix} × {1234,3407} | | 9731135–42 | Variance estimates for paper |
+| eval missing LODO runs | 12 unevaluated checkpoints | 9733049 | balanced_fbsmix D1–D5, AST D2/D5 |
+| best method random split × 3 seeds | MTRCNN balanced_dann_dicl_proj128_tau02 | 9733051 | compare random-split DSG vs LODO |
+| balanced_dicl_sdal_scol | lodo_balanced_dicl_sdal_scol | 9733089 | full DR-BioL loss (paper best lambdas: λ4=0.01, λ5=0.1, λ2=λ3=1) + ScoL |
+| balanced_dicl_sdal_lam | lodo_balanced_dicl_sdal_lam | 9733096 | paper best lambdas only, no ScoL — control to isolate ScoL contribution |
+
+### Previously completed (ablations, results in table above)
+
+balanced_dann_dicl_proj128, balanced_dann_dicl_proj128_tau02, balanced_dann_wingbeat, balanced_dann_fbsmix (D1 rerun), ttbn/tent, lam0p5/lam2p0, balanced_mixstyle, balanced_dann_groupdro, balanced_dann_embed64/128, balanced_dann_specaug, balanced_dann_specbalance, balanced_dann_hpss, balanced_dann_clipnorm2, balanced_dann_hpss_clipnorm, multi-seed × {1234,3407}
 
 ---
 
@@ -114,9 +114,13 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 - [x] GroupDRO, embed_dim, SpecAugment, species-balanced loss submitted
 - [x] HPSS and clip_normalize submitted
 - [x] TENT/TTBN re-eval on balanced_dann submitted
-- [ ] Wait for running jobs; update results table
+- [x] All ablation results collected (2026-06-04); best = balanced_dann_dicl_proj128_tau02
+- [x] Eval submitted for 12 missing LODO checkpoints (job 9733049)
+- [x] Random-split training submitted for best method × 3 seeds (job 9733051)
+- [ ] Collect random-split DSG for best method once job 9733051 finishes
+- [ ] Collect ScoL ablation results (jobs 9733089 vs 9733096) — compare lam-only vs lam+ScoL
 - [ ] Implement CMVN per-bin normalization + delta features (code change needed)
-- [ ] Run best-combination experiment once individual winners are known
+- [ ] Run best-combination experiment (balanced_dann + FBSMix + dicl_proj128_tau02)
 - [ ] t-SNE visualization of embeddings (balanced vs balanced_dann vs best) — no training cost
 - [ ] Produce submission file from best checkpoint (evaluate_ensemble.py or single-model)
 - [ ] Update ensemble_template.json with best members
@@ -125,7 +129,7 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 
 ## Submission Strategy
 
-1. **Current best: balanced_dann_fbsmix (0.385 LODO BA_unseen, 3/4 folds)** — await D1 completion
+1. **Current best: balanced_dann_dicl_proj128_tau02 (0.378 LODO BA_unseen, DSG 0.202, 4/4 folds)**
 2. Run multi-seed on winner → ensemble across seeds for submission
 3. TENT on eval clips (`evaluate_tent.py`) applied to best checkpoint — test-time adaptation
 4. TTBN confirmed harmful (adapts toward D5 on D5-dominated test set) — do NOT use
@@ -144,6 +148,7 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 - TENT on LODO: `eval_lodo.py --tent-steps N --tent-lr 1e-3` → writes to `*_tent{N}/` subdirs
 - TTBN on LODO: `eval_lodo.py --ttbn` → writes to `*_ttbn/` subdirs
 - DicL: `dicl_weight: 0.1, dicl_tau: 0.07`; uses `proj_embedding` (128-dim) if `contrastive_proj_dim: 128` set
+- ScoL: `scol_weight: 1.0, scol_tau: 0.01` — SupCon with same-species positives (any domain); Eq. 4-5 from DR-BioL paper; implemented in `framework/losses.py:species_cohesion_contrastive_loss`
 - FBS-Mix: `freq_band_mixstyle: true` — mixes bins 0-8, protects 9-35 (wingbeat core), padding-aware
 - HPSS: `augmentation.hpss.enabled: true, p: 1.0` — use p=1.0 not 0.5 for consistent domain normalisation
 - GroupDRO: `group_dro_eta: 0.01` — per-domain exponential loss reweighting

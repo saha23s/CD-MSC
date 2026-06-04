@@ -348,6 +348,8 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
                 model=model, dataloader=train_loader, optimizer=optimizer, device=device,
                 mixup_fn=mixup_fn, fbs_mix_fn=fbs_mix_fn, grl_lambda=grl_lam,
                 domain_loss_weight=config.get("domain_loss_weight", 1.0),
+                scol_weight=config.get("scol_weight", 0.0),
+                scol_tau=config.get("scol_tau", 0.01),
                 dicl_weight=config.get("dicl_weight", 0.0),
                 dicl_tau=config.get("dicl_tau", 0.07),
                 sdal_weight=config.get("sdal_weight", 0.0),

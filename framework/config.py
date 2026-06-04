@@ -22,6 +22,7 @@ FEATURE_CONFIG_KEYS = [
     "n_mels",
     "fmin",
     "fmax",
+    "use_delta",
 ]
 
 
@@ -35,11 +36,14 @@ def resolve_config(config: Dict) -> Dict:
     config = dict(config)
     sample_rate = config["sample_rate"]
     config["n_mels"] = 64
+    config["n_mels_filterbank"] = 64  # always 64 mel filters; model dim may differ
     config["fmin"] = 0
     config["fmax"] = int(sample_rate / 2)
     config["win_length"] = max(1, int(math.floor(1024 * (sample_rate / 16000))))
     config["hop_length"] = max(1, int(math.floor(160 * (sample_rate / 16000))))
     config["n_fft"] = config["win_length"]
+    if config.get("use_delta", False):
+        config["n_mels"] = 64 * 2  # delta appended along freq axis → model input is 128-dim
     return config
 
 

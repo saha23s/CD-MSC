@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from framework.losses import domain_invariant_contrastive_loss, species_conditional_mmd_loss
+from framework.losses import domain_invariant_contrastive_loss, species_cohesion_contrastive_loss, species_conditional_mmd_loss
 from framework.metadata import SPECIES_WINGBEAT_TARGETS
 from framework.group_dro import GroupDROState
 
@@ -189,6 +189,8 @@ def train_one_epoch(
     fbs_mix_fn=None,
     grl_lambda=None,
     domain_loss_weight: float = 1.0,
+    scol_weight: float = 0.0,
+    scol_tau: float = 0.01,
     dicl_weight: float = 0.0,
     dicl_tau: float = 0.07,
     sdal_weight: float = 0.0,
@@ -254,11 +256,15 @@ def train_one_epoch(
         )
         loss = species_loss + domain_loss_weight * domain_loss
 
-        # DicL / SdaL operate on the raw (non-mixed) labels and embeddings.
+        # Contrastive / alignment losses operate on raw (non-mixed) labels.
         # Skip when mixup is active — mixed labels break contrastive pairing.
-        if (dicl_weight > 0 or sdal_weight > 0) and mixup_fn is None:
+        if (scol_weight > 0 or dicl_weight > 0 or sdal_weight > 0) and mixup_fn is None:
             emb = outputs.get("proj_embedding", outputs.get("embedding"))
             if emb is not None:
+                if scol_weight > 0:
+                    loss = loss + scol_weight * species_cohesion_contrastive_loss(
+                        emb, species_labels, tau=scol_tau
+                    )
                 if dicl_weight > 0:
                     loss = loss + dicl_weight * domain_invariant_contrastive_loss(
                         emb, species_labels, domain_labels, tau=dicl_tau

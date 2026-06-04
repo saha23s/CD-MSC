@@ -29,6 +29,51 @@ import torch
 import torch.nn.functional as F
 
 
+def species_cohesion_contrastive_loss(
+    embeddings: torch.Tensor,
+    species_labels: torch.Tensor,
+    tau: float = 0.01,
+) -> torch.Tensor:
+    """Species-Cohesion Contrastive Loss (ScoL).
+
+    Positive pairs: same species label, any domain.
+    Denominator: all pairs excluding self.
+
+    Implements Eq. (4-5) from DR-BioL (Hou et al., 2025, arXiv:2510.00346).
+    Enforces intra-class compactness and inter-class separation in the species
+    embedding space. Complements DicL (which requires cross-domain positives)
+    with a denser gradient signal from within-domain same-species pairs.
+
+    Args:
+        embeddings:     [B, D] model embeddings (any scale; normalised internally).
+        species_labels: [B]    integer species indices.
+        tau:            Temperature. Paper default 0.01.
+
+    Returns:
+        Scalar loss. Returns 0 if no same-species pairs exist in batch.
+    """
+    z = F.normalize(embeddings, dim=-1)          # [B, D]
+    sim = (z @ z.T) / tau                        # [B, B]
+
+    B = z.size(0)
+    eye = torch.eye(B, dtype=torch.bool, device=z.device)
+
+    # Positive mask: same species, excluding self
+    same_sp  = species_labels.unsqueeze(0) == species_labels.unsqueeze(1)  # [B, B]
+    pos_mask = same_sp & ~eye                                                # [B, B]
+
+    has_pos = pos_mask.any(dim=1)
+    if not has_pos.any():
+        return embeddings.new_tensor(0.0)
+
+    log_denom = torch.logsumexp(sim.masked_fill(eye, float("-inf")), dim=1)  # [B]
+
+    n_pos = pos_mask.sum(dim=1).clamp(min=1).float()
+    loss_per_anchor = -(sim * pos_mask).sum(dim=1) / n_pos + log_denom       # [B]
+
+    return loss_per_anchor[has_pos].mean()
+
+
 def domain_invariant_contrastive_loss(
     embeddings: torch.Tensor,
     species_labels: torch.Tensor,

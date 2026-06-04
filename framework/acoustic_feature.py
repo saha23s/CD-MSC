@@ -75,11 +75,15 @@ def extract_log_mel_feature(
     sample_rate: int,
     normalize_waveform: bool,
     device: torch.device,
+    use_delta: bool = False,
 ) -> np.ndarray:
     waveform = load_waveform(audio_path, sample_rate, normalize_waveform)
     waveform_tensor = torch.tensor(waveform, dtype=torch.float32, device=device).unsqueeze(0)
     with torch.no_grad():
         feature = extractor(waveform_tensor)[0].detach().cpu().numpy().astype(np.float32)
+    if use_delta:
+        delta = np.diff(feature, axis=0, prepend=feature[[0]])  # [T, n_mels]
+        feature = np.concatenate([feature, delta], axis=1)      # [T, 2*n_mels]
     return feature
 
 
@@ -113,6 +117,7 @@ def extract_split_features(
             config["sample_rate"],
             config["normalize_waveform"],
             device,
+            use_delta=config.get("use_delta", False),
         )
         print(
             f"[{split_name}] {index}/{total_items} | "
