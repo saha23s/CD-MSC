@@ -102,6 +102,19 @@ The model essentially only works on D5.
 
 ## Experiments Run
 
+### Experiment 2 — Regular DANN, alpha_max=0.3 (2026-06-05) ✅ BEST SO FAR
+
+| Metric | Baseline 10-seed mean | Baseline seed 42 | DANN alpha=0.3 | Change vs baseline mean |
+|--------|----------------------|------------------|----------------|------------------------|
+| BAseen | 0.8806 | 0.8813 | 0.8769 | -0.004 (negligible) |
+| **BAunseen** | **0.1751** | **0.1557** | **0.2225** | **+0.047 (+27%)** |
+| **DSG** | **0.7055** | **0.7255** | **0.6544** | **-0.051** |
+
+Single seed (seed=42). BAunseen improved 27% relative over the official baseline while
+BAseen barely changed — exactly the desired pattern. DSG dropped by 0.051. Strong
+result for a first stable DANN run. Checkpoint and metrics saved to Drive:
+`MyDrive/CD-MSC-outputs/MTRCNN_seed42_B64_E100_earlystop_min10_pati5_dann0.3/`
+
 ### Experiment 1 — Regular DANN, alpha_max=1.0 (2026-06-05) ❌ COLLAPSED
 
 **Result:** Collapsed at epoch 13.
