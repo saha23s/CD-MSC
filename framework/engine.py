@@ -5,6 +5,7 @@ Email: Yuanbo.Hou@eng.ox.ac.uk
 Affiliation: Machine Learning Research Group, University of Oxford
 """
 
+import math
 from collections import defaultdict
 
 import numpy as np
@@ -150,7 +151,14 @@ def evaluate_model(
     return metrics
 
 
-def train_one_epoch(model, dataloader, optimizer, device) -> dict:
+def dann_alpha(epoch: int, total_epochs: int, alpha_max: float) -> float:
+    """Ganin et al. 2016 lambda schedule: ramps from 0 to alpha_max over training."""
+    p = epoch / total_epochs
+    return alpha_max * (2.0 / (1.0 + math.exp(-10.0 * p)) - 1.0)
+
+
+def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_epochs: int = 100, dann_alpha_max: float = 0.0) -> dict:
+    alpha = dann_alpha(epoch, total_epochs, dann_alpha_max) if dann_alpha_max > 0.0 else None
     model.train()
     total_loss = 0.0
     total_species_loss = 0.0
@@ -166,7 +174,7 @@ def train_one_epoch(model, dataloader, optimizer, device) -> dict:
         domain_labels = batch["domain_labels"].to(device)
 
         optimizer.zero_grad()
-        outputs = model(features, lengths)
+        outputs = model(features, lengths, alpha=alpha)
         species_logits = outputs["species_logits"]
         domain_logits = outputs["domain_logits"]
 

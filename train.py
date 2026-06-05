@@ -46,7 +46,11 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     epochs = int(config["epochs"])
     min_epoch = int(config.get("early_stopping_min_epoch", 10))
     patience = int(config.get("early_stopping_patience", 10))
-    return f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    name = f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    dann_alpha_max = config.get("dann_alpha_max", 0.0)
+    if dann_alpha_max > 0.0:
+        name += f"_dann{dann_alpha_max}"
+    return name
 
 
 def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: Path, model_name: str) -> dict:
@@ -198,6 +202,9 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 dataloader=train_loader,
                 optimizer=optimizer,
                 device=device,
+                epoch=epoch,
+                total_epochs=config["epochs"],
+                dann_alpha_max=config.get("dann_alpha_max", 0.0),
             )
             val_metrics = evaluate_model(
                 model=model,

@@ -8,7 +8,7 @@ Affiliation: Machine Learning Research Group, University of Oxford
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class ConvStage(nn.Module):
@@ -107,6 +107,23 @@ def masked_mean_max(x: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
     return masked_mean + masked_max
 
 
+class GRL(torch.autograd.Function):
+    """Gradient Reversal Layer for DANN training (Ganin et al. 2016).
+
+    In the forward pass this is an identity. In the backward pass the gradient
+    is scaled by -alpha, pushing the backbone toward domain-invariant features.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, alpha: float) -> torch.Tensor:
+        ctx.alpha = alpha
+        return x
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor):
+        return -ctx.alpha * grad, None
+
+
 class MTRCNNClassifier(nn.Module):
     def __init__(self, config, num_species_classes: int, num_domain_classes: int) -> None:
         super().__init__()
@@ -144,7 +161,7 @@ class MTRCNNClassifier(nn.Module):
         self.species_classifier = nn.Linear(32, num_species_classes)
         self.domain_classifier = nn.Linear(32, num_domain_classes)
 
-    def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, features: torch.Tensor, lengths: torch.Tensor, alpha: Optional[float] = None) -> Dict[str, torch.Tensor]:
         x = features.unsqueeze(1).transpose(1, 3)
         x = self.input_bn(x)
         x = x.transpose(1, 3)
@@ -156,7 +173,8 @@ class MTRCNNClassifier(nn.Module):
         ]
         features = torch.cat(branch_outputs, dim=1)
         embedding = F.gelu(self.embedding(features))
+        domain_input = GRL.apply(embedding, alpha) if alpha is not None else embedding
         return {
             "species_logits": self.species_classifier(embedding),
-            "domain_logits": self.domain_classifier(embedding),
+            "domain_logits": self.domain_classifier(domain_input),
         }
