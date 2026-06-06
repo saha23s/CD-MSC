@@ -59,7 +59,7 @@ def evaluate_model(
             batch_species_labels = batch["species_labels"].to(device)
             batch_domain_labels = batch["domain_labels"].to(device)
 
-            outputs = model(features, lengths)
+            outputs = model(features, lengths, species_labels=batch_species_labels)
             batch_species_logits = outputs["species_logits"]
             batch_domain_logits = outputs["domain_logits"]
 
@@ -174,7 +174,7 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_
         domain_labels = batch["domain_labels"].to(device)
 
         optimizer.zero_grad()
-        outputs = model(features, lengths, alpha=alpha)
+        outputs = model(features, lengths, alpha=alpha, species_labels=species_labels)
         species_logits = outputs["species_logits"]
         domain_logits = outputs["domain_logits"]
 

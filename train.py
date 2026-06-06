@@ -50,6 +50,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     dann_alpha_max = config.get("dann_alpha_max", 0.0)
     if dann_alpha_max > 0.0:
         name += f"_dann{dann_alpha_max}"
+    if config.get("cdann", False):
+        name += "_cdann"
     return name
 
 

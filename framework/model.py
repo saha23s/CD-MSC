@@ -157,11 +157,14 @@ class MTRCNNClassifier(nn.Module):
             n_mels=config["n_mels"],
         )
 
+        self.cdann = config.get("cdann", False)
+        self.num_species_classes = num_species_classes
         self.embedding = nn.Linear(64 * 3, 32)
         self.species_classifier = nn.Linear(32, num_species_classes)
-        self.domain_classifier = nn.Linear(32, num_domain_classes)
+        domain_input_size = 32 + num_species_classes if self.cdann else 32
+        self.domain_classifier = nn.Linear(domain_input_size, num_domain_classes)
 
-    def forward(self, features: torch.Tensor, lengths: torch.Tensor, alpha: Optional[float] = None) -> Dict[str, torch.Tensor]:
+    def forward(self, features: torch.Tensor, lengths: torch.Tensor, alpha: Optional[float] = None, species_labels: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         x = features.unsqueeze(1).transpose(1, 3)
         x = self.input_bn(x)
         x = x.transpose(1, 3)
@@ -174,6 +177,9 @@ class MTRCNNClassifier(nn.Module):
         features = torch.cat(branch_outputs, dim=1)
         embedding = F.gelu(self.embedding(features))
         domain_input = GRL.apply(embedding, alpha) if alpha is not None else embedding
+        if self.cdann and species_labels is not None:
+            species_onehot = F.one_hot(species_labels, num_classes=self.num_species_classes).float()
+            domain_input = torch.cat([domain_input, species_onehot], dim=-1)
         return {
             "species_logits": self.species_classifier(embedding),
             "domain_logits": self.domain_classifier(domain_input),
