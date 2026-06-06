@@ -96,11 +96,38 @@ The model essentially only works on D5.
 - `colab_dann.ipynb` — Colab notebook: clone/pull, restore features from Drive,
   parameterised DANN_ALPHA_MAX/SEED cell, train, save to Drive, results comparison table
 
-**NOT yet implemented:** C-DANN (conditional domain discriminator)
+### C-DANN (committed 2026-06-06)
+
+- `framework/model.py` — `cdann` flag; `domain_classifier` input 32→41 when cdann=True;
+  `forward()` accepts `species_labels`, concatenates one-hot after GRL
+- `framework/engine.py` — `species_labels` passed to model in both train and eval
+- `train.py` — `_cdann` suffix added to experiment name when cdann=True
+- `colab_dann.ipynb` — `CDANN=True/False` parameter, wired into config cell
+- `CDANN.md` — standalone technical reference: An. dirus example, arch diagram, math
+
+### Batch Balancing via WeightedRandomSampler (committed 2026-06-06)
+
+- `train.py` — when `batch_balance_domain=True`, builds a `WeightedRandomSampler`
+  with per-domain inverse-frequency weights so each domain appears ~equally per batch;
+  experiment name gets `_balanced` suffix
+- `colab_dann.ipynb` — `BALANCE_BATCHES=True/False` parameter
 
 ---
 
 ## Experiments Run
+
+### Experiment 3 — C-DANN, alpha_max=0.3 (2026-06-06) ⚠️ BELOW REGULAR DANN
+
+| Metric | Baseline 10-seed mean | Baseline seed 42 | C-DANN alpha=0.3 | Change vs baseline mean |
+|--------|----------------------|------------------|-----------------|------------------------|
+| BAseen | 0.8806 | 0.8813 | 0.8879 | +0.007 |
+| **BAunseen** | **0.1751** | **0.1557** | **0.1865** | **+0.011 (+6.5%)** |
+| **DSG** | **0.7055** | **0.7255** | **0.7014** | **-0.004** |
+
+Single seed (seed=42). BAunseen improved over baseline but fell short of regular DANN
+alpha=0.3 (0.2225). Hypothesis: C-DANN's stronger discriminator (has species one-hot,
+so it can predict domain more easily) effectively increases adversarial pressure at the
+same alpha, partially collapsing species features. Next step: try C-DANN with alpha=0.1.
 
 ### Experiment 2 — Regular DANN, alpha_max=0.3 (2026-06-05) ✅ BEST SO FAR
 
@@ -324,29 +351,21 @@ If results with 0.3 are stable, 0.5 is a reasonable next experiment.
 
 ## Current Plan (priority order)
 
-### 1. Regular DANN, alpha_max=0.3 (immediate — just change one line in notebook)
-Run `colab_dann.ipynb` with `DANN_ALPHA_MAX = 0.3`. Quick reference point.
-Expected: stable training, some improvement in BAunseen over baseline.
+### 1. C-DANN, alpha_max=0.1 + batch balancing (next run) ← YOU ARE HERE
+C-DANN alpha=0.3 underperformed regular DANN — hypothesis is the discriminator is
+stronger so effective adversarial pressure is higher than intended. Try alpha=0.1.
+Also add batch balancing (implemented) to fix D5 dominance from the sampling side.
 
-### 2. C-DANN, alpha_max=0.3 (needs code change in model.py + engine.py)
-Implement conditional domain discriminator. Run alongside or immediately after step 1.
-Expected: better protection of rare species, potentially higher BAunseen than regular DANN.
+Run `colab_dann.ipynb` with:
+- `DANN_ALPHA_MAX = 0.1`
+- `CDANN = True`
+- `BALANCE_BATCHES = True`
 
-### 3. Batch Balancing (alongside C-DANN, not after)
-The D5 dominance problem affects all DANN variants — a batch of 64 currently has
-~63 D5 samples. The domain discriminator essentially learns "is this D5 or not?"
-Weighted sampling to enforce equal domain representation per batch (e.g. ~13 samples
-per domain) makes the adversarial signal much more meaningful.
+### 2. Regular DANN alpha=0.3 + batch balancing
+Check whether batch balancing alone explains the improvement, independent of C-DANN.
+Run with `CDANN = False`, `DANN_ALPHA_MAX = 0.3`, `BALANCE_BATCHES = True`.
 
-**Important:** D4 has only 80 training samples total — equal-domain sampling will
-oversample D4 heavily. Use oversampling (sample with replacement from D4) or
-set per-domain weights rather than strict equality.
-
-Batch balancing + C-DANN together address the D5 problem from two angles:
-- Balancing fixes what the adversary *sees* (more D1–D4 in every batch)
-- C-DANN fixes what the adversary is *conditioned on* (per-species domain invariance)
-
-### 4. Download evaluation set and generate submission predictions
+### 3. Download evaluation set and generate submission predictions
 Evaluation set on Zenodo (link in README.md line 9). Must be done before 2026-06-15.
 Use `predict.py` or `evaluate.py` once we have a best-performing checkpoint.
 

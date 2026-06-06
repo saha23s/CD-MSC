@@ -11,6 +11,7 @@ from pathlib import Path
 
 import torch
 from torch.optim import AdamW
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
 from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
@@ -52,6 +53,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += f"_dann{dann_alpha_max}"
     if config.get("cdann", False):
         name += "_cdann"
+    if config.get("batch_balance_domain", False):
+        name += "_balanced"
     return name
 
 
@@ -184,7 +187,21 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         if config["normalize_features"]:
             print(f"loading from {training_stats_path(config)}")
 
-        train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
+        if config.get("batch_balance_domain", False):
+            domain_labels = torch.tensor([s["domain_label"] for s in train_dataset.samples])
+            class_counts = torch.bincount(domain_labels)
+            weights = 1.0 / class_counts[domain_labels].float()
+            sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset), replacement=True)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=config["batch_size"],
+                sampler=sampler,
+                num_workers=config["num_workers"],
+                collate_fn=pad_collate_fn,
+                pin_memory=device.type == "cuda",
+            )
+        else:
+            train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
         eval_batch_size = config.get("eval_batch_size", config["batch_size"])
         val_loader = make_loader(val_dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)
 
