@@ -116,6 +116,21 @@ The model essentially only works on D5.
 
 ## Experiments Run
 
+### Experiment 4 — C-DANN alpha=0.3 + Balanced Batches (2026-06-08) ✅ BEST SO FAR
+
+| Metric | Baseline 10-seed mean | Baseline seed 42 | C-DANN+Balanced | Change vs baseline mean |
+|--------|----------------------|------------------|-----------------|------------------------|
+| BAseen | 0.8806 | 0.8813 | 0.7950 | -0.086 |
+| **BAunseen** | **0.1751** | **0.1557** | **0.2626** | **+0.087 (+50%)** |
+| **DSG** | **0.7055** | **0.7255** | **0.5324** | **-0.173** |
+
+Single seed (seed=42). Best result so far. BAunseen improved 50% relative over the
+official baseline. DSG dropped by 0.173 — the largest domain gap reduction yet.
+BAseen fell to 0.795 (−0.086 vs baseline) — expected tradeoff from forcing the model
+away from D5 specialisation. Since BAunseen is the primary challenge metric this is
+a strong result. Batch balancing appears to be the dominant driver — the adversarial
+signal became meaningful for the first time with balanced domain representation per batch.
+
 ### Experiment 3 — C-DANN, alpha_max=0.3 (2026-06-06) ⚠️ BELOW REGULAR DANN
 
 | Metric | Baseline 10-seed mean | Baseline seed 42 | C-DANN alpha=0.3 | Change vs baseline mean |
@@ -351,19 +366,14 @@ If results with 0.3 are stable, 0.5 is a reasonable next experiment.
 
 ## Current Plan (priority order)
 
-### 1. C-DANN, alpha_max=0.1 + batch balancing (next run) ← YOU ARE HERE
-C-DANN alpha=0.3 underperformed regular DANN — hypothesis is the discriminator is
-stronger so effective adversarial pressure is higher than intended. Try alpha=0.1.
-Also add batch balancing (implemented) to fix D5 dominance from the sampling side.
+### 1. C-DANN alpha=0.1 + balanced batches ← NEXT RUN
+BAseen dropped to 0.795 with alpha=0.3 — gentler adversarial pressure may recover
+some seen-domain performance without losing much BAunseen.
+Set `DANN_ALPHA_MAX = 0.1`, `CDANN = True`, `BALANCE_BATCHES = True`.
 
-Run `colab_dann.ipynb` with:
-- `DANN_ALPHA_MAX = 0.1`
-- `CDANN = True`
-- `BALANCE_BATCHES = True`
-
-### 2. Regular DANN alpha=0.3 + batch balancing
-Check whether batch balancing alone explains the improvement, independent of C-DANN.
-Run with `CDANN = False`, `DANN_ALPHA_MAX = 0.3`, `BALANCE_BATCHES = True`.
+### 2. Regular DANN alpha=0.3 + balanced batches
+Isolate whether C-DANN is contributing or if balancing alone explains the Exp 4 jump.
+Set `CDANN = False`, `DANN_ALPHA_MAX = 0.3`, `BALANCE_BATCHES = True`.
 
 ### 3. Download evaluation set and generate submission predictions
 Evaluation set on Zenodo (link in README.md line 9). Must be done before 2026-06-15.
