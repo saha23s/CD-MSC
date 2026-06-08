@@ -55,6 +55,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_cdann"
     if config.get("batch_balance_domain", False):
         name += "_balanced"
+    if config.get("spec_augment", False):
+        name += "_specaug"
     return name
 
 
@@ -172,6 +174,9 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_training_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            spec_augment=config.get("spec_augment", False),
+            spec_augment_time_mask=config.get("spec_augment_time_mask", 40),
+            spec_augment_freq_mask=config.get("spec_augment_freq_mask", 10),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -189,8 +194,10 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
         if config.get("batch_balance_domain", False):
             domain_labels = torch.tensor([s["domain_label"] for s in train_dataset.samples])
-            class_counts = torch.bincount(domain_labels)
-            weights = 1.0 / class_counts[domain_labels].float()
+            species_labels_all = torch.tensor([s["species_label"] for s in train_dataset.samples])
+            pair_keys = species_labels_all * len(DOMAIN_NAMES) + domain_labels
+            pair_counts = torch.bincount(pair_keys, minlength=len(SPECIES_NAMES) * len(DOMAIN_NAMES)).float().clamp(min=1)
+            weights = 1.0 / pair_counts[pair_keys]
             sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset), replacement=True)
             train_loader = DataLoader(
                 train_dataset,

@@ -55,6 +55,9 @@ class MosquitoFeatureDataset(Dataset):
         normalize_features: bool = True,
         expected_feature_signature: Optional[str] = None,
         expected_stats_signature: Optional[str] = None,
+        spec_augment: bool = False,
+        spec_augment_time_mask: int = 40,
+        spec_augment_freq_mask: int = 10,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -62,6 +65,9 @@ class MosquitoFeatureDataset(Dataset):
         self.training = training
         self.max_train_frames = max_train_frames
         self.normalize_features = normalize_features and feature_stats_path is not None
+        self.spec_augment = spec_augment and training
+        self.spec_augment_time_mask = spec_augment_time_mask
+        self.spec_augment_freq_mask = spec_augment_freq_mask
         self.feature_mean = None
         self.feature_std = None
         if self.normalize_features:
@@ -70,6 +76,19 @@ class MosquitoFeatureDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.samples)
+
+    def _spec_augment(self, feature: np.ndarray) -> np.ndarray:
+        T, F = feature.shape
+        out = feature.copy()
+        t = random.randint(0, self.spec_augment_time_mask)
+        if t > 0 and T > t:
+            t0 = random.randint(0, T - t)
+            out[t0:t0 + t, :] = 0.0
+        f = random.randint(0, self.spec_augment_freq_mask)
+        if f > 0 and F > f:
+            f0 = random.randint(0, F - f)
+            out[:, f0:f0 + f] = 0.0
+        return out
 
     def _maybe_crop(self, feature: np.ndarray) -> np.ndarray:
         if not self.training or not self.max_train_frames or feature.shape[0] <= self.max_train_frames:
@@ -87,6 +106,8 @@ class MosquitoFeatureDataset(Dataset):
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
         feature = self._normalize(feature)
+        if self.spec_augment:
+            feature = self._spec_augment(feature)
         return {
             "file_id": sample["file_id"],
             "feature": torch.tensor(feature, dtype=torch.float32),
