@@ -1,0 +1,68 @@
+% =================================================================
+% Figure definitions — included from main.tex between sections
+% =================================================================
+
+% ── Fig 1 ────────────────────────────────────────────────────────────────────
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/fig1_data_analysis}
+  \caption{%
+    \textbf{Dataset imbalance and per-frequency variance analysis.}
+    \textit{Left:} Training-set domain distribution (log scale).
+    Domain D5 holds 212,339 clips~(99.4\%); D1--D4 together have only
+    1,308.
+    When D5 is the only available domain signal, adversarial training
+    learns to detect ``D5 vs.\ not-D5'', removing only this one
+    discriminative direction from the embedding space.
+    \textit{Right:} Per-mel-bin ratio of within-domain to cross-domain
+    variance on the test split.
+    Bins~9--35 ($\approx$361--1{,}360~Hz, the wingbeat fundamental and
+    lower harmonics) are consistently species-dominated;
+    bins~0--8 ($\approx$36--325~Hz) are domain-dominated.
+    FBS-Mix mixes only bins~0--8.%
+  }
+  \label{fig:data_analysis}
+\end{figure}
+
+% ── Fig 2 ────────────────────────────────────────────────────────────────────
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/fig2_system_diagram}
+  \caption{%
+    \textbf{Proposed system.}
+    FBS-Mix randomises the domain-dominated low-frequency band
+    (bins~0--8, orange) before feature extraction, leaving the
+    species-discriminative wingbeat core (bins~9--35, blue) unchanged.
+    MTRCNN extracts a 32-dim shared embedding~$z$.
+    DANN enforces domain invariance via gradient reversal (GRL).
+    DiCL pulls same-species, cross-domain embeddings together through a
+    projection MLP~($32{\to}128{\to}128$).%
+  }
+  \label{fig:system}
+\end{figure}
+
+% ── Fig 3 ────────────────────────────────────────────────────────────────────
+\begin{figure}[t]
+  \centering
+  % TODO: replace with fig3_tsne.pdf once generated on compute node.
+  % Run: python scripts/paper/fig3_tsne.py --baseline <path> --best <path>
+  \IfFileExists{figures/fig3_tsne.pdf}{%
+    \includegraphics[width=\columnwidth]{figures/fig3_tsne}
+  }{%
+    \fbox{\parbox{\columnwidth}{\centering\vspace{1.8em}
+      \textit{[Placeholder: t-SNE figure pending GPU computation.}\\
+      \textit{Run \texttt{scripts/paper/fig3\_tsne.py} on a compute node.]}
+      \vspace{1.8em}
+    }}%
+  }
+  \caption{%
+    \textbf{t-SNE of 32-dim embeddings (LODO D1 test set, coloured by domain)
+    --- pending GPU computation; figure will be populated for camera-ready.}
+    \textit{Expected left (baseline):} D1--D4 embeddings collapse to an
+    isolated corner, completely separated from the D5 cloud (confirmed on
+    standard-split in prior analysis).
+    \textit{Expected right (proposed system):} Domain clusters intermix
+    substantially after adversarial and contrastive domain-invariance training.%
+  }
+  \label{fig:tsne}
+\end{figure}

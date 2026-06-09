@@ -11,11 +11,12 @@ Baseline for the **BioDCASE 2026 Cross-Domain Mosquito Species Classification** 
 Audio and features live in scratch, not home:
 
 ```
-data/                  → /network/scratch/s/sahas/CD-MSC/
+data/Development_data/ → actual audio + features (on scratch)
 Development_data/      → data/Development_data   (convenience symlink for config paths)
+outputs/               → data/Development_data/outputs  (symlink; actual data on scratch)
 ```
 
-Both are `.gitignore`d. Config paths like `./Development_data/raw_audio` resolve correctly through these symlinks.
+All three are `.gitignore`d. Config paths like `./Development_data/raw_audio` and `output_root: "./data/Development_data/outputs"` resolve correctly through these symlinks.
 
 ## Key Commands
 
@@ -31,14 +32,14 @@ python train.py --config configs/default_experiment.json
 
 # Evaluate a checkpoint
 python evaluate.py --config configs/default_experiment.json \
-  --checkpoint outputs/<run_name>/model/model_best.pth \
+  --checkpoint data/Development_data/outputs/<run_name>/model/model_best.pth \
   --split test \
-  --metrics-out outputs/<run_name>/manual_test_metrics.json \
-  --predictions-out outputs/<run_name>/manual_test_predictions.jsonl
+  --metrics-out data/Development_data/outputs/<run_name>/manual_test_metrics.json \
+  --predictions-out data/Development_data/outputs/<run_name>/manual_test_predictions.jsonl
 
 # Predict a single file
 python predict.py --config configs/default_experiment.json \
-  --checkpoint outputs/<run_name>/model/model_best.pth \
+  --checkpoint data/Development_data/outputs/<run_name>/model/model_best.pth \
   --audio Development_data/raw_audio/<file>.wav
 
 # Run full 10-seed benchmark
@@ -72,7 +73,7 @@ Loads pre-extracted pickles via `MosquitoFeatureDataset`. Training applies rando
 ### Output structure per run
 
 ```
-outputs/<experiment_name>/
+data/Development_data/outputs/<experiment_name>/
 ├── resolved_config.json, run_context.json, run_summary.json
 ├── train.log, metrics.csv
 ├── model/model_best.pth, model_final.pth

@@ -1,0 +1,91 @@
+% BioDCASE 2026 Workshop Paper
+% NOTE: Replace IEEEtran.cls with the official DCASE 2026 template when available.
+%       Get IEEEtran.cls from https://www.ieee.org/conferences/publishing/templates.html
+%       or run: texmf-update after installing texlive-publishers (Debian/Ubuntu).
+%
+% Compile: pdflatex main.tex && bibtex main && pdflatex main.tex && pdflatex main.tex
+
+\documentclass[conference,a4paper]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{cite}
+\usepackage{ifthen}
+
+\hypersetup{colorlinks=false, pdfborder={0 0 0}}
+
+% ------------------------------------------------------------------
+% Convenience macros
+% ------------------------------------------------------------------
+\newcommand{\BAu}{BA_{\text{unseen}}}
+\newcommand{\BAs}{BA_{\text{seen}}}
+\newcommand{\DSG}{\mathrm{DSG}}
+\newcommand{\best}[1]{\textbf{#1}}
+\definecolor{pending}{rgb}{0.55,0.55,0.55}
+
+% ------------------------------------------------------------------
+\title{Domain-Balanced Adversarial Training with\\
+Physics-Grounded Augmentation for\\
+Cross-Domain Mosquito Species Classification}
+
+\author{%
+  \IEEEauthorblockN{Sulagna Saha}
+  \IEEEauthorblockA{Mila -- Quebec AI Institute\\
+    Université de Montréal\\
+    \texttt{saha23s@mtholyoke.edu}}
+  % TODO: add co-authors
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Mosquito classifiers trained in one recording environment fail badly
+when deployed in another---the domain-shift problem.
+The BioDCASE 2026 challenge~\cite{biodcase2026} makes this concrete:
+we find that one recording environment (D5) contains 99.4\% of all
+training data, so standard domain-generalisation methods never
+actually encounter the minority environments they need to generalise
+to, and gain less than 0.5 percentage points on the true
+cross-environment test.
+The fix is simple but non-obvious: \textit{balance the training
+domains first}.
+Resampling to equalise domain frequency per epoch alone gains
++15.6~pp in unseen-domain balanced accuracy ($\BAu$).
+With balanced training in place, domain-adversarial learning and
+contrastive alignment across recording conditions push the system to
+$\BAu{=}0.378$ (+21.3~pp) and a domain-generalisation gap of
+$\DSG{=}0.202$ over the unbalanced baseline.
+We also introduce \textit{Frequency-Band-Selective Mix~(FBS-Mix)}: an
+augmentation that mixes the recording-condition-sensitive
+low-frequency band of the spectrogram while leaving the mosquito
+wingbeat band untouched, guided by a per-frequency variance analysis.
+FBS-Mix requires no model changes and reduces $\DSG$ to 0.229 as a
+lightweight alternative.
+\end{abstract}
+
+% ------------------------------------------------------------------
+\input{sections/intro}
+\input{sections/data_analysis}
+% Figures for Sec 2 inserted here so they float near first reference
+\input{sections/figures}
+\input{sections/method}
+\input{sections/experiments}
+\input{sections/results}
+\input{sections/conclusion}
+% ------------------------------------------------------------------
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}

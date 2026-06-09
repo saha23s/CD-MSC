@@ -1,0 +1,46 @@
+% =================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% =================================================================
+
+The main lesson of this work is simple to state but easy to miss in
+practice: if your training data is dominated by one condition, your
+domain-generalisation method is not working---it is just learning
+that one condition.
+Fixing the imbalance first is not optional.
+In the CD-MSC dataset, where one recording environment contributes
+99.4\% of training clips, resampling to balance domains gains +15.6~pp
+in cross-condition accuracy before any DG method is applied.
+On top of that foundation, domain-adversarial training and
+cross-condition contrastive learning push the system to $\BAu{=}0.378$
+(+21.3~pp total) with a domain gap of $\DSG{=}0.202$.
+FBS-Mix---which mixes only the recording-noise frequency band and
+protects the wingbeat signal---provides a lightweight alternative that
+reduces the seen/unseen gap to 0.229 with no model changes.
+
+We also find that gradient reversal does not work for transformer
+backbones in this setting: AST's domain classifier maintains 99.7\%
+accuracy throughout training, meaning the adversarial signal never
+suppresses condition information.
+This failure comes from two compounding causes: the much larger
+backbone gradient overwhelms the adversarial signal, and
+per-sample layer normalisation removes the batch-level condition
+statistics that gradient reversal relies on.
+
+\paragraph{Limitations.}
+All ablations use a single seed; full multi-seed variance estimates
+for the proposed system are pending.
+Domain labels are opaque, so we cannot say what physical differences
+(device type, location, recording protocol) drive the cross-domain
+gap.
+
+\paragraph{Future work.}
+The most promising direction for AST is applying domain-adversarial
+training at the patch-embedding level rather than the output-token
+level, where condition information may be more concentrated, or
+using pretrained AST weights where some domain invariance is already
+encoded.
+For the MTRCNN system, combining FBS-Mix with the DiCL projection
+head~(currently pending as ``best + augmentations'' in
+Table~\ref{tab:ablation}) should reduce the seen/unseen gap below
+0.200 while maintaining high $\BAu$.

@@ -1,0 +1,74 @@
+% =================================================================
+\section{Introduction}
+\label{sec:intro}
+% =================================================================
+
+Mosquitoes transmit diseases that kill hundreds of thousands of people
+every year.
+Knowing which species are present in a region---and in what numbers---is
+the foundation of any targeted control effort, but traditional
+identification requires physical capture and microscopy.
+Miniaturised microphones can passively record the characteristic
+wingbeat sound of flying mosquitoes, and machine learning can identify
+the species from that sound alone~\cite{mukundarajan2017,kiskin2020humming}.
+The practical barrier is \emph{domain shift}: a classifier trained on
+recordings from one microphone or environment performs poorly when
+tested on a different one, even for the same species.
+
+The BioDCASE 2026 Cross-Domain Mosquito Species Classification
+challenge~\cite{biodcase2026} formalises this problem.
+Nine species are recorded across five conditions (D1--D5), and the
+key metric is \emph{species balanced accuracy on unseen conditions}
+($\BAu$)---how well the model recognises each species in a recording
+environment it has never trained on.
+A companion metric, the \emph{domain generalisation gap}
+($\DSG{=}|\BAs - \BAu|$, lower is better), quantifies how much worse
+the model gets on new conditions compared to known ones.
+
+We diagnose a critical problem with the dataset that has not been
+widely acknowledged.
+One recording condition---D5---accounts for 212,339 of the 213,647
+training clips: \textbf{99.4\%}.
+The other four conditions together provide only 1,308 clips.
+This extreme imbalance means that during training, a model almost
+never sees examples from D1--D4.
+Standard domain-generalisation methods like DANN~\cite{dann2016} and
+MixStyle~\cite{mixstyle2021} are built on the assumption that training
+data covers all domains; here, they do not.
+Applied naively, they improve $\BAu$ by only 0.4 and 0.2 percentage
+points respectively---essentially nothing.
+The official challenge metric is similarly affected: roughly 85\% of
+the test set looks like D5 by recording characteristics, so the
+reported $\BAu{=}0.175$ mostly reflects D5 generalisation, not
+genuine cross-condition transfer.
+We adopt a Leave-One-Domain-Out~(LODO) evaluation instead, holding
+out each of D1--D4 in turn, to measure true cross-condition
+performance (Section~\ref{sec:data}).
+
+Our contributions:
+\begin{itemize}
+  \item \textbf{A diagnostic finding:} We show that fixing the domain
+    imbalance is a \emph{prerequisite} for domain-generalisation
+    methods to work at all.
+    Domain-balanced resampling alone gains +15.6~pp $\BAu$---the
+    single largest improvement in our ablation.
+  \item \textbf{FBS-Mix:} A data-motivated augmentation that mixes
+    only the recording-noise frequency band
+    (mel bins 0--8, $\approx$36--325~Hz) and leaves the wingbeat band
+    (bins 9--35, $\approx$361--1{,}360~Hz) untouched, guided by a
+    per-frequency variance analysis.
+  \item \textbf{A comprehensive ablation:} We test ten method
+    combinations under LODO, including actionable negative results:
+    test-time batch-norm adaptation (TTBN) is harmful here, unbalanced
+    DANN is near-useless, and a transformer backbone (AST) fails to
+    benefit from adversarial training because its gradient reversal
+    layer never suppresses domain information.
+\end{itemize}
+
+Our best system---balanced resampling, domain-adversarial
+training~(DANN), and domain-invariant contrastive
+learning~(DiCL)~\cite{drbiol2025} with a projection head---achieves
+$\BAu{=}0.378$ (+21.3~pp over the unbalanced MTRCNN~\cite{mtrcnn2025}
+baseline) and $\DSG{=}0.202$.
+FBS-Mix gives a lighter-weight alternative: $\DSG{=}0.229$ with no
+model changes.

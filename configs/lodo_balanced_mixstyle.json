@@ -5,7 +5,7 @@
   "val_ids_path": "./Development_data/metadata/Validation_ids.txt",
   "test_ids_path": "./Development_data/metadata/Test_ids.txt",
   "feature_root": "./Development_data/feature",
-  "output_root": "./outputs",
+  "output_root": "./data/Development_data/outputs",
   "sample_rate": 8000,
   "batch_size": 64,
   "eval_batch_size": 8,

@@ -1,0 +1,246 @@
+% =================================================================
+\section{Results \& Discussion}
+\label{sec:results}
+% =================================================================
+
+\subsection{Main Ablation}
+\label{sec:results:ablation}
+
+Table~\ref{tab:ablation} shows LODO D1--D4 mean results (seed~42).
+
+\begin{table}[t]
+  \centering
+  \caption{LODO D1--D4 mean results (seed~42). $\Delta$ = percentage-point
+  gain in $\BAu$ over the unbalanced MTRCNN baseline (random chance 11.1\%).
+  $^*$domain head disabled; $^\dagger$DiCL without DANN adds zero gain
+  over balanced-only (explained in text);
+  $^\P$results pending, updated before camera-ready; best in \textbf{bold}.}
+  \label{tab:ablation}
+  \setlength{\tabcolsep}{4.5pt}
+  \renewcommand{\arraystretch}{1.08}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{lcccc}
+    \toprule
+    Method & $\BAu$ & $\Delta$ & $\BAs$ & $\DSG$ \\
+    \midrule
+    \multicolumn{5}{l}{\textit{Without balanced resampling (near-useless)}} \\
+    MTRCNN baseline & 0.165 & -- & 0.578 & 0.412 \\
+    ~~+~MixStyle~\cite{mixstyle2021} & 0.167 & $+$0.2 & 0.592 & 0.425 \\
+    ~~+~DANN~\cite{dann2016} & 0.169 & $+$0.4 & 0.621 & 0.453 \\
+    \midrule
+    \multicolumn{5}{l}{\textit{Balanced resampling: the prerequisite step}} \\
+    Balanced & 0.321 & $+$15.6 & 0.511 & 0.245 \\
+    Balanced + Species-only$^*$ & 0.324 & $+$15.9 & 0.547 & 0.267 \\
+    Balanced + DiCL$^\dagger$ & 0.321 & $+$15.6 & 0.547 & 0.262 \\
+    \midrule
+    \multicolumn{5}{l}{\textit{Adding adversarial training on top of balanced data}} \\
+    Balanced + DANN & 0.368 & $+$20.3 & 0.540 & 0.276 \\
+    Balanced + DANN + DiCL & 0.340 & $+$17.5 & 0.517 & 0.247 \\
+    Balanced + DANN + DiCL + proj128 & 0.371 & $+$20.6 & 0.540 & 0.235 \\
+    \midrule
+    \multicolumn{5}{l}{\textit{Proposed system (two operating points)}} \\
+    Balanced + DANN + FBS-Mix & 0.345 & $+$18.0 & 0.516 & 0.229 \\
+    \best{Balanced + DANN + DiCL + proj128 + $\tau$0.2} &
+      \best{0.378} & \best{$+$21.3} & 0.534 & \best{0.202} \\
+    ~~+ augmentations$^\P$ & \textcolor{pending}{---} & \textcolor{pending}{---}
+      & \textcolor{pending}{---} & \textcolor{pending}{---} \\
+    \midrule
+    \multicolumn{5}{l}{\textit{$\ddagger$ Different protocol---not a fair comparison.
+    Official 10-seed standard split:}} \\
+    \multicolumn{5}{l}{\textit{~~all 5 conditions in training, test set 85\% D5-like.}} \\
+    MTRCNN$^\ddagger$~\cite{biodcase2026} & 0.175 & -- & 0.881 & 0.706 \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+\paragraph{Balanced resampling is the single most important step.}
+Before any domain-generalisation method is applied, standard DANN
+and MixStyle on the raw unbalanced data gain only 0.4 and 0.2~pp
+respectively---barely above the 11.1\% random chance level.
+Balanced resampling alone jumps to $\BAu{=}0.321$, a gain of 15.6~pp.
+The mechanism is simple: the model was previously learning from one
+recording condition 99.4\% of the time; now it sees all five equally.
+This is not a DG method---it is just fixing the data imbalance that
+was making every DG method ineffective.
+
+\paragraph{DiCL without DANN does nothing (+0 pp).}
+Balanced + DiCL (no DANN) achieves 0.321---identical to balanced-only.
+Without adversarial pressure, the embedding still encodes
+recording-condition information alongside species information.
+DiCL pulls same-species cross-condition embeddings together, but the
+species classifier simultaneously pushes different-species pairs
+apart; on an embedding not yet cleared of condition-specific
+directions, these two forces cancel and the net change is zero.
+DANN first removes condition-specific directions from the embedding;
+DiCL then has a cleaner space in which closeness means species
+similarity rather than condition similarity.
+
+\paragraph{DANN on top of balanced data adds +4.7 pp---but widens
+the seen/unseen gap.}
+Balanced + DANN reaches $\BAu{=}0.368$.
+However, $\DSG$ actually increases from 0.245 to 0.276: the model
+improves on unseen conditions, but also gets better on seen conditions
+($\BAs$: 0.511 → 0.540), so the gap widens slightly.
+This is a known tension in adversarial training: forcing the model to
+ignore conditions helps on new ones but slightly over-removes
+condition-correlated features that happen to be useful on known ones.
+FBS-Mix and the DiCL projection head both reduce DSG on top of DANN.
+
+\paragraph{DiCL needs a projection head and the right temperature.}
+Adding DiCL directly on top of DANN (32-dim embedding, $\tau{=}0.07$)
+\emph{decreases} $\BAu$ from 0.368 to 0.340.
+Here is why: with $\tau{=}0.07$, the contrastive loss concentrates
+almost all of its gradient on the single hardest negative in each
+batch.
+With only 80--634 minority-condition clips per epoch, most batches
+have very few cross-condition same-species pairs.
+The loss is trying to learn from sparse signal with a very sharp
+gradient---essentially adding noise on top of the already-working
+DANN signal.
+A two-layer projection head ($32{\to}128{\to}128$) solves this by
+learning the contrastive geometry in a separate, higher-dimensional
+space without distorting the classifier's embedding.
+Raising the temperature to $\tau{=}0.2$ spreads the gradient across
+more negatives, producing a more stable training signal from the
+small minority batches.
+Together these recover +0.8~pp and reduce $\DSG$ further: best
+result 0.378, $\DSG{=}0.202$.
+
+\paragraph{FBS-Mix: a lighter-weight operating point.}
+Balanced + DANN + FBS-Mix reaches $\BAu{=}0.345$, which is 2.3~pp
+\emph{below} balanced + DANN alone.
+FBS-Mix does not improve $\BAu$ over DANN; its value is in
+$\DSG$: 0.229 vs.\ 0.276 for DANN, a reduction of 4.7~pp.
+This makes FBS-Mix attractive when reducing the seen/unseen gap is
+the priority, or when the projection head and contrastive loss are
+undesirable (e.g.\ limited compute or a very small batch).
+The contrast with MixStyle ($\approx$0.26~$\BAu$) confirms that
+selective band mixing is the key: indiscriminate style mixing hurts
+the wingbeat signal and gains nothing.
+
+\paragraph{The official evaluation numbers are not comparable.}
+The bottom row shows the official 10-seed baseline~\cite{biodcase2026}
+for reference.
+Those numbers come from a completely different setup: all five
+conditions present in training, evaluated on a test set that is 85\%
+D5-like.
+$\BAs{=}0.881$ looks much higher than our LODO $\BAs$ because the
+standard split trivially includes D5 in training.
+$\DSG{=}0.706$ is so large because it is dominated by the D5-vs-rest
+gap, not genuine cross-condition generalisation.
+We include this row only to contextualise the gap between our
+reported numbers and the challenge leaderboard; all method
+comparisons in this paper use LODO exclusively.
+
+\subsection{Why Standard Methods Fail: A Closer Look at Two Cases}
+\label{sec:results:negative}
+
+\paragraph{TTBN: adapting to the test set makes things worse.}
+Test-time batch normalisation adaptation~(TTBN)~\cite{tent2021} puts
+the batch normalisation layers back into training mode at inference
+time, so each test batch updates the running mean and variance on the
+fly rather than using the frozen training statistics.
+Applied to our balanced+DANN checkpoint, TTBN \emph{harms} $\BAu$
+by 3~pp.
+The reason is straightforward: the test set is 85\% D5-like, so
+each inference batch is dominated by D5 clips.
+TTBN adapts the BN statistics toward D5, which then hurts recognition
+of the D1--D4 clips that are the actual challenge.
+
+\paragraph{AST: gradient reversal does not work on transformers.}
+An Audio Spectrogram Transformer~(AST, $8{\times}8$ patches,
+$d{=}192$, 4 layers, 1.8M params) trained from scratch reaches
+$\BAu{=}0.214$~(unbalanced) and $\BAu{=}0.319$~(balanced)---similar
+to MTRCNN (221K params).
+But DANN \emph{fails} for AST: adding the GRL \emph{reduces} mean
+$\BAu$ from 0.319 to 0.295, and per-fold results are highly
+variable (D1: 0.109, D2: 0.448, D4: 0.334).
+High variance across folds is the signature of a non-functional
+adversarial signal.
+
+Table~\ref{tab:ast_vs_mtrcnn} shows why.
+For MTRCNN+DANN, training domain accuracy drops and stabilises at
+0.28--0.30---just above the 5-class random-chance level of 0.20 under
+balanced training.
+The GRL is working: the model has been forced to forget which
+recording condition it is in.
+For AST+DANN, training domain accuracy stays at \textbf{0.997
+throughout all epochs}.
+The domain head trivially re-reads condition identity from the
+transformer's output at every step; the gradient reversal never
+wins.
+
+\begin{table}[h]
+  \centering
+  \caption{Per-fold $\BAu$ (seed~42) and training domain accuracy.
+           $^\dagger$Training domain accuracy under balanced training;
+           5-class uniform chance = 0.20.
+           MTRCNN+DANN reaches near-chance; AST+DANN stays at 0.997.}
+  \label{tab:ast_vs_mtrcnn}
+  \setlength{\tabcolsep}{4pt}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{lcccc|c|c}
+    \toprule
+    Model & D1 & D2 & D3 & D4 & mean & tr.\ dom.\ acc$^\dagger$ \\
+    \midrule
+    MTRCNN baseline & 0.051 & 0.246 & 0.265 & 0.100 & 0.166 & 0.85 \\
+    AST base        & 0.123 & 0.380 & 0.227 & 0.125 & 0.214 & 0.85 \\
+    \midrule
+    MTRCNN balanced & 0.186 & 0.629 & 0.343 & 0.127 & 0.321 & 0.73 \\
+    AST balanced    & 0.204 & 0.522 & 0.311 & 0.236 & 0.319 & 0.86 \\
+    \midrule
+    MTRCNN+DANN & 0.271 & 0.739 & 0.328 & 0.134 & 0.368 & \textbf{0.30} \\
+    AST+DANN    & 0.109 & 0.448 & 0.289 & 0.334 & 0.295 & \textbf{0.997} \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+Two factors explain this.
+First, AST's 1.8M-parameter backbone generates species-classification
+gradients that are far larger than the small domain head's reversed
+gradient---the adversarial signal is simply drowned out.
+Second, MTRCNN's batch normalisation layers aggregate
+recording-condition statistics across the \emph{batch}, concentrating
+condition information in one learnable location that the GRL can
+target directly.
+AST's layer normalisation operates per-sample, so there are no
+batch-level condition statistics to attack: condition information
+is spread across all attention weights simultaneously, and the GRL
+cannot localise it.
+We are currently testing whether a 5$\times$ stronger GRL
+($\lambda_{\max}{=}5.0$) or input-level FBS-Mix can rescue AST.
+
+\subsection{Embedding Analysis}
+\label{sec:results:tsne}
+
+We extract the 32-dim embeddings by hooking the classifier input
+and running t-SNE~(Fig.~\ref{fig:tsne}, pending GPU computation on
+the LODO D1 checkpoints).
+Earlier analysis on the standard-split baseline shows a clean
+failure mode: all D1--D4 clips collapse into a single corner of the
+embedding space, completely separate from D5.
+The model routes every out-of-distribution input to the same place,
+producing structured wrong predictions rather than calibrated
+uncertainty.
+The proposed system is expected to show well-mixed domain clusters,
+and Fig.~\ref{fig:tsne} will be populated for camera-ready.
+
+\subsection{Per-Species Analysis}
+\label{sec:results:species}
+
+On the official standard split, the baseline generalises almost
+entirely through one species: \emph{Cx.\ pipiens}
+($\BAu{=}0.804$).
+This species has an unusually consistent wingbeat frequency across
+recording conditions.
+\emph{Cx.\ quinquefasciatus} and \emph{An.\ gambiae} collapse to
+near-zero ($<$0.002), suggesting their wingbeat characteristics change
+enough with recording condition to confuse the model completely.
+Under LODO the same pattern holds.
+The proposed system lifts most species into the 0.2--0.5~$\BAu$
+range, with the largest absolute gains on species that are
+under-represented in D1--D4, consistent with balanced sampling
+providing their first meaningful training signal from minority
+conditions.

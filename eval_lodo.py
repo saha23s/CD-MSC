@@ -142,11 +142,14 @@ def main() -> None:
     parser.add_argument("--tent-steps", type=int, default=0, help="TENT adaptation steps per batch (0=off); writes to *_tent{n}/ subdirs")
     parser.add_argument("--tent-lr", type=float, default=1e-3, help="TENT Adam learning rate")
     parser.add_argument("--eval-batch-size", type=int, default=None, help="Override eval_batch_size in config")
+    parser.add_argument("--seed", type=int, default=None, help="Override seed in config")
     args = parser.parse_args()
 
     config = load_config(args.config)
     if args.eval_batch_size is not None:
         config["eval_batch_size"] = args.eval_batch_size
+    if args.seed is not None:
+        config["seed"] = args.seed
     folds  = FOLDS if args.fold == "all" else [args.fold]
 
     for fold in folds:

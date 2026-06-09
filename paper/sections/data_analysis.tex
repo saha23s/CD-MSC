@@ -1,0 +1,152 @@
+% =================================================================
+\section{Dataset \& Problem Analysis}
+\label{sec:data}
+% =================================================================
+
+\subsection{Dataset}
+\label{sec:data:dataset}
+
+The CD-MSC corpus contains 271,380 audio clips of nine mosquito
+species recorded across five conditions (D1--D5).
+The labels D1--D5 are opaque---the challenge release does not
+include device or location metadata---so we treat them as five distinct
+but uncharacterised recording environments~\cite{biodcase2026}.
+All clips are resampled to 8~kHz (the challenge-specified rate) and
+converted to 64-bin log-mel spectrograms using the official baseline
+frontend: 512-sample Hann window (25~ms), 80-sample hop (10~ms),
+mel filterbank from 0 to 4{,}000~Hz.
+Because mel frequency spacing is non-linear, the bin-to-frequency
+mapping ranges from $\sim$36~Hz per bin at the low end to
+$\sim$140~Hz per bin at the high end.
+Features are normalised by subtracting the per-bin mean and dividing
+by the per-bin standard deviation, both computed from the training
+split only.
+Clip lengths are mostly 0.63~s (mode = 63 frames); the test set
+contains some multi-second recordings.
+The official training/validation/test split is 213,647 / 30,516 /
+27,217 clips.
+
+\subsection{The Core Problem: One Domain Dominates Everything}
+\label{sec:data:imbalance}
+
+Table~\ref{tab:domain_counts} and Fig.~\ref{fig:data_analysis}~(left)
+show the training-set breakdown.
+D5 holds \textbf{212,339 of the 213,647 training clips---99.4\%}.
+Conditions D1--D4 together contribute only 1,308 clips,
+split across 80 to 634 clips each.
+
+\begin{table}[t]
+  \centering
+  \caption{Training-set domain distribution. D5 holds 99.4\% of
+           training data; D1--D4 together account for only 1,308 clips.}
+  \label{tab:domain_counts}
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Condition & Train & Val & Test & Train \% \\
+    \midrule
+    D1 & 634   & 96     & 3{,}335  & 0.30 \\
+    D2 & 230   & 30     & 524      & 0.11 \\
+    D3 & 364   & 53     & 262      & 0.17 \\
+    D4 & 80    & 3      & 117      & 0.04 \\
+    D5 & 212{,}339 & 30{,}334 & 22{,}979 & \textbf{99.38} \\
+    \midrule
+    Total & 213{,}647 & 30{,}516 & 27{,}217 & 100 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Why this breaks domain-generalisation methods.}
+Domain-adversarial training (DANN) works by training a discriminator
+to classify which domain a sample came from, then reversing its
+gradients to push the model toward domain-agnostic features.
+But when 99.4\% of batches come from D5, the discriminator's easiest
+strategy is to learn one thing: ``is this D5 or not?''
+Reversing that gradient removes only the D5-vs-not-D5 signal, leaving
+all D1--D4-specific features in the embedding intact.
+When training data is balanced across domains, the discriminator
+must separate all five conditions, and the reversed gradient removes
+all of them.
+This mechanism explains our central empirical finding: DANN without
+balanced training gains only +0.4~pp $\BAu$; DANN \emph{with}
+balanced training gains +20.3~pp.
+
+\paragraph{Why D5 is excluded from our evaluation.}
+Holding D5 out in a Leave-One-Domain-Out experiment would mean
+training on only 1,308 clips---roughly the size of a small pilot
+study---which is a data-starvation problem, not a domain-shift problem.
+We exclude D5 from all LODO means; all reported numbers are D1--D4
+mean.
+
+\subsection{Why the Official Evaluation Metric Is Misleading}
+\label{sec:data:split}
+
+We compute the domain centroid of each condition in the training set
+(the per-domain average log-mel feature vector) and assign each test
+clip to its nearest centroid by Euclidean distance.
+Approximately 85\% of test clips are closest to the D5 centroid.
+The official 10-seed challenge baseline reports
+$\BAu{=}0.175$~\cite{biodcase2026}---but 85\% of those ``unseen''
+test clips effectively look like D5, making this a measure of
+\emph{D5 generalisation}, not cross-condition transfer.
+Our LODO baseline (seed~42, D1--D4 mean) gives
+$\BAu{=}0.165$, $\BAs{=}0.578$, $\DSG{=}0.412$.
+\textbf{We use LODO D1--D4 mean $\BAu$ as our primary metric
+throughout.}
+
+\subsection{Which Frequency Bands Carry Species vs.\ Recording-Condition Information?}
+\label{sec:data:freq_analysis}
+
+To decide \emph{where} in the spectrogram to apply data augmentation,
+we ask: which mel bins vary more \emph{within} one recording condition
+(species-specific variation) than \emph{across} conditions
+(condition-specific variation)?
+We compute this ratio---within-domain variance divided by
+cross-domain variance---for each of the 64 mel bins, using the
+held-out test split.\footnote{This analysis uses test-split data solely
+to motivate the design choices $K{=}9$ and $K'{=}36$.
+Both values were fixed before any FBS-Mix experiments; no further
+tuning was performed.}
+
+A ratio below~1 means the bin varies more across recording conditions
+than within them: it is picking up \emph{recording noise}, not
+species signal.
+A ratio above~1 means it varies more within a condition: it is
+picking up something that differs between species, not between
+recording devices.
+
+Fig.~\ref{fig:data_analysis}~(right) shows three clear zones:
+
+\begin{itemize}
+  \item \textbf{Bins 0--8} ($\approx$36--325~Hz), ratio 0.30--0.93:
+    condition-dominated.
+    These bins capture low-frequency recording noise and microphone
+    response---information that changes with the device, not the mosquito.
+  \item \textbf{Bins 9--35} ($\approx$361--1{,}360~Hz), ratio 1.50--4.12:
+    species-dominated.
+    This is the mosquito wingbeat core: the ratio peaks at bin~17
+    ($\approx$649~Hz), near the wingbeat fundamental of the most
+    common species~\cite{mukundarajan2017}.
+  \item \textbf{Bins 36--63} ($\approx$1{,}412--3{,}854~Hz),
+    ratio 0.73--1.47: mixed---upper harmonics and background noise
+    are tangled together.
+\end{itemize}
+
+\textbf{Why mosquito wingbeat is device-invariant.}
+Mosquito wings beat at a species-specific rate (300--800~Hz
+fundamental, with harmonics extending to $\sim$1{,}400~Hz)
+determined by wing morphology~\cite{mukundarajan2017}.
+This physical oscillation is independent of the recording device, so
+the wingbeat frequency content stays consistent across conditions even
+when everything else changes.
+
+This analysis tells us precisely what MixStyle gets wrong.
+MixStyle~\cite{mixstyle2021} mixes the statistics of \emph{all}
+frequency channels inside the CNN, which randomises the wingbeat
+core (bins 9--35) at the same time as the condition-noise band
+(bins 0--8).
+Corrupting species information cancels any benefit from diversifying
+condition noise---which is why balanced+MixStyle and balanced-only
+perform identically ($\approx$0.32~$\BAu$).
+FBS-Mix~(Section~\ref{sec:method:fbsmix}) mixes only the
+condition-dominated band and leaves the wingbeat core alone.

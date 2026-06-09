@@ -1,6 +1,6 @@
 data/
 Development_data
-outputs/
+outputs
 sbatch/
 .claude/
 __pycache__/
@@ -9,3 +9,5 @@ __pycache__/
 logs/
 job_log.md
 .ipynb_checkpoints/
+paper/figures/
+.venv/

@@ -1,0 +1,161 @@
+% =================================================================
+\section{Proposed System}
+\label{sec:method}
+% =================================================================
+
+Fig.~\ref{fig:system} shows the full pipeline.
+We use the MTRCNN backbone~\cite{mtrcnn2025} throughout: three parallel
+convolutional branches (temporal kernel sizes 3, 5, 7 capture different
+wingbeat timescales), each with three Conv-BN-ReLU-Pool stages,
+followed by masked mean$+$max pooling that ignores padding frames.
+The three branch outputs are concatenated into a 32-dimensional
+shared embedding~$z$ ($\approx$221K parameters total; the 32-dim size
+follows the original MTRCNN paper).
+Two linear heads predict species (9 classes) and recording domain
+(5 classes) from~$z$.
+
+\subsection{Domain-Balanced Sampling}
+\label{sec:method:balance}
+
+\textbf{The problem it solves:} without intervention, D5 appears in
+99.4\% of every training batch, so the model learns almost exclusively
+from one recording condition.
+The other four conditions are effectively invisible.
+
+\textbf{The fix:} we assign each training clip a sampling weight
+$w_i = 1 / \text{count}(d_i)$, where $d_i$ is its domain label.
+This equalises how often each domain is seen per epoch, upsampling
+D1--D4 clips by 200--2{,}600$\times$.
+As discussed in Section~\ref{sec:data:imbalance}, every subsequent
+method in this paper depends on this step: without balanced training,
+the model has no D1--D4 signal to generalise from.
+
+\subsection{Domain-Adversarial Training (DANN)}
+\label{sec:method:dann}
+
+\textbf{The problem it solves:} even with balanced training, the
+embedding~$z$ may still encode recording-condition information
+alongside species information, letting the model ``cheat'' by
+memorising condition-specific cues.
+
+\textbf{How it works:} a Gradient Reversal Layer~(GRL)~\cite{dann2016}
+sits between~$z$ and the domain head.
+During the forward pass it is an identity; during backpropagation it
+flips the sign and scales the gradient by~$\lambda(p)$.
+This makes the embedding \emph{worse} at predicting the domain---the
+model is forced to discard recording-condition information to keep the
+domain head from working.
+The schedule from~\cite{dann2016} gradually increases the adversarial
+pressure:
+\begin{equation}
+  \lambda(p) = \lambda_{\max}\!\cdot\!\left(\frac{2}{1+e^{-10p}}-1\right),
+  \quad p = \frac{e}{E},
+  \label{eq:dann_schedule}
+\end{equation}
+where $e$ is the current epoch and $E{=}100$ (max epochs).
+The constant~10 controls how quickly the adversary ramps up~\cite{dann2016};
+at the halfway point ($p{=}0.5$) the model is already at 96\% of its
+full adversarial pressure.
+We set $\lambda_{\max}{=}1.0$.
+
+\subsection{Domain-Invariant Contrastive Learning (DiCL)}
+\label{sec:method:dicl}
+
+\textbf{The problem it solves:} DANN pushes domain information
+\emph{out} of the embedding, but it does not explicitly pull
+same-species recordings from different conditions
+\emph{together}.
+
+\textbf{How it works:} DiCL~\cite{drbiol2025} treats any two clips of
+the same species from \emph{different} recording conditions as a
+positive pair.
+For each such anchor~$i$, the contrastive loss pulls its embedding
+toward all its cross-condition same-species partners, while pushing
+it away from all other clips in the batch.
+
+Concretely, let $P_i = \{j : y_j = y_i,\, d_j \neq d_i\}$ be the
+cross-condition positives for anchor~$i$, and let
+$\mathcal{A} = \{i : |P_i| > 0\}$.
+Embeddings are first passed through a two-layer projection head
+($h_i = \mathrm{proj}(z_i) \in \mathbb{R}^{128}$; architecture:
+$32{\to}128{\xrightarrow{\mathrm{ReLU}}}128$, no final activation).
+The projection head means the contrastive geometry is learned in a
+separate space from the classifier, which prevents the loss from
+distorting the species-discriminative directions in~$z$~\cite{supcon2020}.
+DiCL then minimises:
+\begin{equation}
+  \mathcal{L}_{\mathrm{DiCL}} =
+  {-}\frac{1}{|\mathcal{A}|}\!\sum_{i \in \mathcal{A}}
+  \frac{1}{|P_i|}\!\sum_{j \in P_i}
+  \log\frac{e^{\,\tilde{h}_i \cdot \tilde{h}_j / \tau}}
+           {\sum_{k \neq i} e^{\,\tilde{h}_i \cdot \tilde{h}_k / \tau}},
+  \label{eq:dicl}
+\end{equation}
+where $\tilde{h} = h / \|h\|_2$.
+We use temperature $\tau{=}0.2$ (rather than 0.07 in~\cite{drbiol2025}):
+with only 80--634 minority-domain clips per epoch there are very few
+positive pairs per batch, and a lower temperature concentrates the
+gradient on only the hardest negatives, making learning unstable.
+The combined training loss is:
+\begin{equation}
+  \mathcal{L} = \mathcal{L}_{\mathrm{sp}} - \lambda(p)\,\mathcal{L}_{\mathrm{dom}}
+              + w_c\,\mathcal{L}_{\mathrm{DiCL}},
+  \label{eq:total_loss}
+\end{equation}
+with $w_c{=}0.1$~\cite{drbiol2025} and cross-entropy losses
+$\mathcal{L}_{\mathrm{sp}}$, $\mathcal{L}_{\mathrm{dom}}$ for species
+and domain.
+
+\subsection{Frequency-Band-Selective Mix (FBS-Mix)}
+\label{sec:method:fbsmix}
+
+\textbf{The problem it solves:}
+MixStyle~\cite{mixstyle2021} diversifies domain characteristics by
+randomly blending the mean and variance of CNN feature maps between
+training samples.
+It works well on vision tasks, but here it backfires: it mixes the
+frequency bands that carry \emph{species} information (the wingbeat
+tone) at the same time as the recording-noise bands it is trying to
+diversify.
+The two effects cancel, and balanced+MixStyle performs no better than
+balanced alone ($\approx$0.32~$\BAu$).
+
+\textbf{The insight:}
+the per-frequency variance analysis~(Section~\ref{sec:data:freq_analysis})
+tells us exactly which bands to mix and which to leave alone.
+Bins 0--8 ($\approx$36--325~Hz) are dominated by recording-condition
+noise.
+Bins 9--35 ($\approx$361--1{,}360~Hz) carry the mosquito wingbeat and
+are species-discriminative.
+So we mix \emph{only} bins 0--8 and protect the rest.
+
+\textbf{How it works:}
+FBS-Mix is an input-level batch transform, applied before the model
+with probability $p{=}0.5$ per batch (stochastic application
+prevents the model from depending on the augmentation).
+It implements AdaIN~\cite{huang2017adain}---adaptive instance
+normalisation---on the domain-noise band only.
+Given a padded batch $X \in \mathbb{R}^{B \times T \times F}$, extract
+the low-frequency band $X_{\mathrm{lo}} = X_{:,:,0:K}$ ($K{=}9$).
+Sample a mixing coefficient $\lambda \sim \mathrm{Beta}(\alpha,\alpha)$
+with $\alpha{=}0.1$ (a U-shaped distribution: usually $\lambda$ is near
+0 or 1, so most batches see a clear style donor, and blending is
+occasionally subtle) and a random batch permutation~$\pi$.
+Compute per-sample, per-bin statistics $(\mu_i,\sigma_i)$ over
+\emph{valid frames only}---padding frames are excluded, because a
+63-frame clip padded to 200 frames is 68\% zeros and would severely
+bias na\"ive global statistics.
+Transfer the blended statistics to the band:
+\begin{equation}
+  \tilde{X}_{\mathrm{lo},i} =
+    \underbrace{\bigl(\lambda\,\sigma_i + (1{-}\lambda)\,\sigma_{\pi(i)}\bigr)}_{\text{blended std}}
+    \cdot \frac{X_{\mathrm{lo},i} - \mu_i}{\sigma_i}
+    +\; \underbrace{\bigl(\lambda\,\mu_i + (1{-}\lambda)\,\mu_{\pi(i)}\bigr)}_{\text{blended mean}}.
+  \label{eq:fbsmix}
+\end{equation}
+Bins $K{:}K'$ (wingbeat, $K'{=}36$, 361--1{,}360~Hz) and bins
+$K'{:}F$ (upper harmonics and noise, 1{,}412--3{,}854~Hz) are left
+unchanged.
+Because FBS-Mix operates on the raw spectrogram before any model
+layers, there is no inference-time overhead: it is simply switched
+off during evaluation.

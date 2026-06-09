@@ -1,0 +1,87 @@
+% =================================================================
+\section{Experimental Setup}
+\label{sec:experiments}
+% =================================================================
+
+\paragraph{Evaluation protocol.}
+We use Leave-One-Domain-Out~(LODO): train on four of the five
+recording conditions, evaluate on the fifth.
+We run folds D1--D4 and report the mean; D5 is excluded because
+holding it out leaves only 1,308 training clips---a data-starvation
+problem~(Section~\ref{sec:data}).
+All ablations use seed~42.
+We separately run seeds 1234 and 3407 on the baseline and proposed
+system to estimate variance; these are in Table~\ref{tab:multiseed}.
+
+\begin{table}[h]
+  \centering
+  \caption{LODO D1--D4 mean $\BAu$ across seeds for baseline and
+           proposed system. $^\star$D3 fold incomplete; 3-fold mean.}
+  \label{tab:multiseed}
+  \setlength{\tabcolsep}{5pt}
+  \resizebox{\columnwidth}{!}{%
+  \begin{tabular}{lccc}
+    \toprule
+    System & seed 42 & seed 1234 & seed 3407 \\
+    \midrule
+    MTRCNN baseline  & 0.166 & 0.197 & 0.147 \\
+    Proposed (Bal+DANN+DiCL+proj128+$\tau$0.2) & 0.378 & $0.351^\star$ & 0.355 \\
+    \bottomrule
+  \end{tabular}%
+  }
+\end{table}
+
+\paragraph{Metrics.}
+\emph{Balanced accuracy}~(BA) is the mean per-class recall over the 9
+species---it gives equal weight to rare species instead of letting the
+numerically dominant species dominate the score.
+Random chance for 9 classes is 11.1\%.
+Following the challenge definition:
+\begin{itemize}
+  \item $\BAu$~(primary): BA on the held-out condition.
+  \item $\BAs$: BA on the four seen conditions.
+  \item $\DSG = |\BAs - \BAu|$: how much worse the model is on new
+    conditions vs.\ known ones (lower is better).
+\end{itemize}
+All reported values are LODO D1--D4 mean.
+
+\paragraph{Training.}
+Adam optimiser, learning rate 1e-3, weight decay 1e-4, batch size 64.
+We use early stopping with a minimum of 10 epochs, patience of~5
+epochs, and a maximum of 100; the checkpoint with highest $\BAu$ on
+the LODO validation split is used for evaluation.
+Features are normalised by the per-bin mean and standard deviation
+of the training split.
+For DANN: $\lambda_{\max}{=}1.0$, $E{=}100$ (Eq.~\ref{eq:dann_schedule}).
+For DiCL: weight $w_c{=}0.1$, temperature $\tau{=}0.2$, projection
+head $32{\to}128{\to}128$ with ReLU between layers.
+For FBS-Mix: $\alpha{=}0.1$, probability $p{=}0.5$, cutoff $K{=}9$.
+All runs use one NVIDIA A100 GPU; each LODO fold takes roughly 27~min
+for MTRCNN and 100~min for AST.
+
+\paragraph{What we compare.}
+We build up the system one component at a time to show the
+contribution of each piece:
+\begin{itemize}
+  \item \textbf{Baseline}: unbalanced MTRCNN, standard cross-entropy.
+  \item \textbf{+MixStyle}~/~\textbf{+DANN}: apply each to the
+    \emph{unbalanced} data, to show they are near-useless without
+    balance.
+  \item \textbf{Balanced}: balanced resampling only.
+  \item \textbf{Balanced + Species-only}$^*$: balanced, domain head
+    turned off---tests whether domain supervision helps at all.
+  \item \textbf{Balanced + DiCL}$^\dagger$: contrastive loss without
+    adversarial training---tests whether DiCL works alone.
+  \item \textbf{Balanced + DANN}: adversarial training on balanced data.
+  \item \textbf{Balanced + DANN + DiCL}: add contrastive loss (32-dim,
+    $\tau{=}0.07$, no projection head).
+  \item \textbf{+proj128} / \textbf{+$\tau$0.2}: ablate the projection
+    head and temperature.
+  \item \textbf{Balanced + DANN + FBS-Mix}: test FBS-Mix as a
+    DANN alternative (no DiCL).
+  \item \textbf{Best + Augmentations$^\P$}: full proposed system plus
+    HPSS and clip normalisation; results pending.
+\end{itemize}
+We additionally report two negative results in-text: test-time
+batch-norm adaptation~(TTBN) and an Audio Spectrogram
+Transformer~(AST) backbone.
