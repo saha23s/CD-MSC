@@ -8,7 +8,7 @@ Affiliation: Machine Learning Research Group, University of Oxford
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from framework.gradient_reversal import GradientReversalLayer
 from framework.mixstyle import MixStyle
@@ -176,68 +176,13 @@ class MTRCNNClassifier(nn.Module):
             if proj_dim > 0 else None
         )
 
-        # Optional physics-grounded wingbeat features.
-        self.wb_start: int = 0
-        self.wb_end:   int = 0
-        embed_in_dim: int  = 64 * 3
-        if config.get("use_wingbeat_feature", False):
-            self.wb_start, self.wb_end = self._wingbeat_mel_bins(
-                config["n_mels"], config.get("fmin", 0), config.get("fmax", 4000)
-            )
-            embed_in_dim += 1
-        self.embedding = nn.Linear(embed_in_dim, embed_dim)
-
-        # Optional auxiliary wingbeat regression head.
-        self.wingbeat_head: Optional[nn.Linear] = (
-            nn.Linear(embed_dim, 1) if config.get("wingbeat_weight", 0.0) > 0 else None
-        )
+        self.embedding = nn.Linear(64 * 3, embed_dim)
 
     def set_grl_lambda(self, lambda_: float) -> None:
         if self.grl is not None:
             self.grl.set_lambda(lambda_)
 
-    @staticmethod
-    def _wingbeat_mel_bins(
-        n_mels: int, fmin: float, fmax: float,
-        wb_lo: float = 400.0, wb_hi: float = 700.0,
-    ) -> Tuple[int, int]:
-        """Return (start, end) mel bin indices covering wb_lo–wb_hi Hz (HTK scale)."""
-        import math
-        mel = lambda f: 2595 * math.log10(1 + f / 700) if f > 0 else 0.0
-        mel_min, mel_max = mel(fmin), mel(max(fmax, 1.0))
-        span = mel_max - mel_min
-        start = int((mel(wb_lo) - mel_min) / span * (n_mels - 1))
-        end   = int((mel(wb_hi) - mel_min) / span * (n_mels - 1)) + 1
-        return max(0, start), min(n_mels, end)
-
-    def _compute_spectral_centroid(
-        self, features: torch.Tensor, lengths: torch.Tensor
-    ) -> torch.Tensor:
-        """Temporal-mean spectral centroid within the wingbeat mel band.
-
-        Uses softmax over the band so the result is invariant to global amplitude
-        shifts (including per-feature normalisation). Returns [B, 1] in [0, 1],
-        where 0 = wb_lo and 1 = wb_hi.
-        """
-        wb = features[:, :, self.wb_start:self.wb_end]          # [B, T, n_wb]
-        n_wb = wb.size(-1)
-        weights = F.softmax(wb, dim=-1)                          # [B, T, n_wb]
-        bin_idx = torch.linspace(0, 1, n_wb, device=features.device, dtype=features.dtype)
-        centroid = (weights * bin_idx).sum(dim=-1)               # [B, T]
-        T = features.size(1)
-        mask = (
-            torch.arange(T, device=features.device).unsqueeze(0)
-            < lengths.unsqueeze(1)
-        ).to(features.dtype)
-        centroid = (centroid * mask).sum(dim=1) / lengths.float().clamp(min=1)  # [B]
-        return centroid.unsqueeze(1)                             # [B, 1]
-
     def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> Dict[str, torch.Tensor]:
-        # Compute physics-grounded wingbeat centroid before branch processing.
-        wb_centroid: Optional[torch.Tensor] = None
-        if self.wb_start < self.wb_end:
-            wb_centroid = self._compute_spectral_centroid(features, lengths)  # [B, 1]
-
         x = features.unsqueeze(1).transpose(1, 3)
         x = self.input_bn(x)
         x = x.transpose(1, 3)
@@ -248,9 +193,6 @@ class MTRCNNClassifier(nn.Module):
             self.kernel_7_branch(x, lengths),
         ], dim=1)                                                # [B, 192]
 
-        if wb_centroid is not None:
-            branch_out = torch.cat([branch_out, wb_centroid], dim=1)  # [B, 193]
-
         embedding = F.gelu(self.embedding(branch_out))
         domain_input = self.grl(embedding) if self.grl is not None else embedding
         out: Dict[str, torch.Tensor] = {
@@ -260,6 +202,4 @@ class MTRCNNClassifier(nn.Module):
         }
         if self.contrastive_proj is not None:
             out["proj_embedding"] = self.contrastive_proj(embedding)
-        if self.wingbeat_head is not None:
-            out["wingbeat_pred"] = self.wingbeat_head(embedding)  # [B, 1]
         return out

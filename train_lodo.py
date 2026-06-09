@@ -154,14 +154,10 @@ def evaluate_and_save_test(
     checkpoint_path: Path,
     output_dir: Path,
     lodo_held_out_domain: Optional[str] = None,
-    tent_steps: int = 0,
-    tent_lr: float = 1e-3,
 ) -> Dict:
     """Evaluate checkpoint on the official test split and persist results."""
-    ttbn = config.get("ttbn", False)
     result = evaluate_checkpoint(
-        config, checkpoint_path, "test", return_predictions=True, ttbn=ttbn,
-        tent_steps=tent_steps, tent_lr=tent_lr,
+        config, checkpoint_path, "test", return_predictions=True,
         lodo_held_out_domain=lodo_held_out_domain,
     )
     metrics     = result["metrics"]
@@ -313,15 +309,6 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             )
             species_loss_weight = w / w.sum() * len(SPECIES_NAMES)  # normalise
 
-        # ---- GroupDRO state (optional) --------------------------------------
-        from framework.group_dro import GroupDROState
-        group_dro_state = None
-        if config.get("group_dro_eta", 0.0) > 0:
-            group_dro_state = GroupDROState(
-                num_domains=len(DOMAIN_NAMES),
-                eta=config["group_dro_eta"],
-            ).to(device)
-
         # ---- model + optimiser ----------------------------------------------
         model     = build_model(config, device)
         optimizer = AdamW(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
@@ -352,8 +339,6 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
                 dicl_tau=config.get("dicl_tau", 0.07),
                 sdal_weight=config.get("sdal_weight", 0.0),
                 sdal_sigma=config.get("sdal_sigma", 1.0),
-                wingbeat_weight=config.get("wingbeat_weight", 0.0),
-                group_dro_state=group_dro_state,
                 species_loss_weight=species_loss_weight,
             )
             val_metrics = evaluate_model(

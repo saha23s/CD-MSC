@@ -95,14 +95,27 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 
 | ID | Config | Jobs | What it tests |
 |----|--------|------|---------------|
-| eval missing LODO runs | 12 unevaluated checkpoints | 9733049 | balanced_fbsmix D1–D5, AST D2/D5 |
-| best method random split × 3 seeds | MTRCNN balanced_dann_dicl_proj128_tau02 | 9733051 | compare random-split DSG vs LODO |
-| balanced_dicl_sdal_scol | lodo_balanced_dicl_sdal_scol | 9733089 | full DR-BioL loss (paper best lambdas: λ4=0.01, λ5=0.1, λ2=λ3=1) + ScoL |
-| balanced_dicl_sdal_lam | lodo_balanced_dicl_sdal_lam | 9733096 | paper best lambdas only, no ScoL — control to isolate ScoL contribution |
+| balanced_dicl_sdal_scol | lodo_balanced_dicl_sdal_scol | 9733089 | full DR-BioL loss + ScoL |
+| balanced_dicl_sdal_lam | lodo_balanced_dicl_sdal_lam | 9733096 | paper lambdas only, no ScoL |
+| lodo_delta | lodo_balanced_dann_dicl_proj128_tau02_delta | 9733097 | best + delta features (n_mels 64→128) |
+| balanced_dann_dicl_proj128_tau02_fbsmix | combo: best + FBS-Mix | 9733102 | best + FBS-Mix |
+| balanced_dann_dicl_proj128_tau02_wb005 | combo: best + wingbeat w=0.05 | 9733104 | best + wingbeat (low weight) |
+| best method random split × 3 seeds | MTRCNN balanced_dann_dicl_proj128_tau02 | 9733146 | random-split DSG vs LODO (3rd attempt, bug fixed) |
+| kitchen_sink | lodo_kitchen_sink | 9733181 | best + FBS-Mix + HPSS p=1.0 + clip_normalize |
+
+### Planned (configs committed, not yet submitted)
+
+| ID | Config | What it tests |
+|----|--------|---------------|
+| ast_balanced_dann_lam5 | lodo_ast_balanced_dann_lam5 | AST + balanced + DANN with higher λ=5 (AST may need stronger gradient reversal) |
+| ast_balanced_fbsmix | lodo_ast_balanced_fbsmix | AST + balanced + FBS-Mix (frequency-domain augmentation on AST features) |
+| balanced_dann_dicl_proj128_tau02_wb005_d4fix | lodo_balanced_dann_dicl_proj128_tau02_wb005_d4fix | best + wb005 with D4 fold fix |
 
 ### Previously completed (ablations, results in table above)
 
-balanced_dann_dicl_proj128, balanced_dann_dicl_proj128_tau02, balanced_dann_wingbeat, balanced_dann_fbsmix (D1 rerun), ttbn/tent, lam0p5/lam2p0, balanced_mixstyle, balanced_dann_groupdro, balanced_dann_embed64/128, balanced_dann_specaug, balanced_dann_specbalance, balanced_dann_hpss, balanced_dann_clipnorm2, balanced_dann_hpss_clipnorm, multi-seed × {1234,3407}
+balanced_dann_dicl_proj128, balanced_dann_dicl_proj128_tau02, balanced_dann_wingbeat, balanced_dann_fbsmix, ttbn/tent, lam0p5/lam2p0, balanced_mixstyle, balanced_dann_groupdro, balanced_dann_embed64/128, balanced_dann_specaug, balanced_dann_specbalance, balanced_dann_hpss, balanced_dann_clipnorm2, balanced_dann_hpss_clipnorm, multi-seed × {1234,3407}
+
+**Bug fixes (2026-06-04):** UnboundLocalError for SPECIES_NAMES (local import inside conditional shadowed module-level import in train.py/train_lodo.py); KeyError for use_delta (not defaulted in resolve_config). Both fixed and committed.
 
 ---
 
@@ -116,11 +129,14 @@ balanced_dann_dicl_proj128, balanced_dann_dicl_proj128_tau02, balanced_dann_wing
 - [x] TENT/TTBN re-eval on balanced_dann submitted
 - [x] All ablation results collected (2026-06-04); best = balanced_dann_dicl_proj128_tau02
 - [x] Eval submitted for 12 missing LODO checkpoints (job 9733049)
-- [x] Random-split training submitted for best method × 3 seeds (job 9733051)
-- [ ] Collect random-split DSG for best method once job 9733051 finishes
+- [x] Random-split training submitted for best method × 3 seeds (job 9733146, bug fixed ×2)
+- [x] Delta features implemented (use_delta flag, feature_root isolation, n_mels 64→128)
+- [x] Kitchen-sink submitted: best + FBS-Mix + HPSS + clip_normalize (job 9733181)
+- [x] Combination experiments submitted: +fbsmix (9733102), +wb005 (9733104)
+- [x] Git branch `feature/lodo-ast-augmentation` pushed with all configs, paper/, scripts/, docs/ (outputs/ untracked)
+- [ ] Submit planned AST augmentation configs (ast_balanced_dann_lam5, ast_balanced_fbsmix, wb005_d4fix)
+- [ ] Collect results: random-split DSG, combo runs, delta, ScoL ablations, kitchen sink
 - [ ] Collect ScoL ablation results (jobs 9733089 vs 9733096) — compare lam-only vs lam+ScoL
-- [ ] Implement CMVN per-bin normalization + delta features (code change needed)
-- [ ] Run best-combination experiment (balanced_dann + FBSMix + dicl_proj128_tau02)
 - [ ] t-SNE visualization of embeddings (balanced vs balanced_dann vs best) — no training cost
 - [ ] Produce submission file from best checkpoint (evaluate_ensemble.py or single-model)
 - [ ] Update ensemble_template.json with best members

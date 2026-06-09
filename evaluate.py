@@ -110,9 +110,6 @@ def evaluate_checkpoint(
     checkpoint_path: Union[str, Path],
     split: str,
     return_predictions: bool = True,
-    ttbn: bool = False,
-    tent_steps: int = 0,
-    tent_lr: float = 1e-3,
     lodo_held_out_domain: Optional[str] = None,
 ) -> Dict:
     config = deepcopy(config)
@@ -149,9 +146,6 @@ def evaluate_checkpoint(
         species_names=SPECIES_NAMES,
         domain_names=DOMAIN_NAMES,
         return_predictions=return_predictions,
-        ttbn=ttbn,
-        tent_steps=tent_steps,
-        tent_lr=tent_lr,
     )
     if return_predictions:
         metrics = result["metrics"]

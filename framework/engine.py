@@ -12,8 +12,6 @@ import torch
 import torch.nn.functional as F
 
 from framework.losses import domain_invariant_contrastive_loss, species_cohesion_contrastive_loss, species_conditional_mmd_loss
-from framework.metadata import SPECIES_WINGBEAT_TARGETS
-from framework.group_dro import GroupDROState
 
 
 def balanced_accuracy(preds: torch.Tensor, labels: torch.Tensor, num_classes: int) -> float:
@@ -42,30 +40,8 @@ def evaluate_model(
     species_names=None,
     domain_names=None,
     return_predictions: bool = False,
-    ttbn: bool = False,
-    tent_steps: int = 0,
-    tent_lr: float = 1e-3,
 ) -> dict:
-    """Evaluate model on a dataloader.
-
-    Args:
-        ttbn:       Test-Time Batch Normalisation — BN layers use batch stats.
-        tent_steps: TENT adaptation steps per batch (Wang et al. 2021).
-                    Adapts BN/LN affine params via entropy minimisation before
-                    each prediction. 0 = disabled. Mutually exclusive with ttbn.
-        tent_lr:    Learning rate for TENT Adam optimiser.
-    """
-    tent_optimizer = None
-    if tent_steps > 0:
-        from framework.tent import configure_tent
-        tent_optimizer = configure_tent(model, lr=tent_lr)
-        # configure_tent already sets model.train() with only norm affines unfrozen
-    else:
-        model.eval()
-        if ttbn:
-            for m in model.modules():
-                if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
-                    m.training = True
+    model.eval()
     species_preds = []
     species_labels = []
     domain_preds = []
@@ -83,10 +59,6 @@ def evaluate_model(
             lengths = batch["lengths"].to(device)
             batch_species_labels = batch["species_labels"].to(device)
             batch_domain_labels = batch["domain_labels"].to(device)
-
-            if tent_optimizer is not None:
-                from framework.tent import tent_step
-                tent_step(model, features, lengths, tent_optimizer, n_steps=tent_steps)
 
             outputs = model(features, lengths)
             batch_species_logits = outputs["species_logits"]
@@ -195,8 +167,6 @@ def train_one_epoch(
     dicl_tau: float = 0.07,
     sdal_weight: float = 0.0,
     sdal_sigma: float = 1.0,
-    wingbeat_weight: float = 0.0,
-    group_dro_state: "GroupDROState | None" = None,
     species_loss_weight: "torch.Tensor | None" = None,
 ) -> dict:
     """Train for one epoch.
@@ -242,14 +212,10 @@ def train_one_epoch(
         domain_logits = outputs["domain_logits"]
 
         sw = species_loss_weight  # None or [num_species] weight tensor
-        if group_dro_state is not None and mixup_fn is None:
-            # GroupDRO: q-weighted per-domain species loss (no mixup support)
-            species_loss = group_dro_state.weighted_loss(species_logits, sp_a, domain_labels)
-        else:
-            species_loss = (
-                lam * F.cross_entropy(species_logits, sp_a, weight=sw)
-                + (1.0 - lam) * F.cross_entropy(species_logits, sp_b, weight=sw)
-            )
+        species_loss = (
+            lam * F.cross_entropy(species_logits, sp_a, weight=sw)
+            + (1.0 - lam) * F.cross_entropy(species_logits, sp_b, weight=sw)
+        )
         domain_loss = (
             lam * F.cross_entropy(domain_logits, dom_a)
             + (1.0 - lam) * F.cross_entropy(domain_logits, dom_b)
@@ -273,12 +239,6 @@ def train_one_epoch(
                     loss = loss + sdal_weight * species_conditional_mmd_loss(
                         emb, species_labels, domain_labels, sigma=sdal_sigma
                     )
-
-        if wingbeat_weight > 0 and mixup_fn is None:
-            wb_pred = outputs.get("wingbeat_pred")
-            if wb_pred is not None:
-                wb_targets = SPECIES_WINGBEAT_TARGETS.to(device)[species_labels]  # [B]
-                loss = loss + wingbeat_weight * F.mse_loss(wb_pred.squeeze(1), wb_targets)
 
         loss.backward()
         optimizer.step()

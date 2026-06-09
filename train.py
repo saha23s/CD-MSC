@@ -58,17 +58,14 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
 def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: Path, model_name: str) -> dict:
     from evaluate import evaluate_checkpoint, save_prediction_rows
 
-    ttbn = config.get("ttbn", False)
     model_output_dir = output_dir / model_name
     model_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Validation is D5 (seen domain) — TTBN not applied, BN stats are well-calibrated
     validation_result = evaluate_checkpoint(config, checkpoint_path, "validation", return_predictions=True)
     save_json(model_output_dir / "validation_metrics.json", validation_result["metrics"])
     save_prediction_rows(model_output_dir / "validation_predictions.jsonl", validation_result["predictions"])
 
-    # Test contains unseen domains — TTBN adapts BN stats to the test batch
-    test_result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True, ttbn=ttbn)
+    test_result = evaluate_checkpoint(config, checkpoint_path, "test", return_predictions=True)
     save_json(model_output_dir / "test_metrics.json", test_result["metrics"])
     save_prediction_rows(model_output_dir / "test_predictions.jsonl", test_result["predictions"])
 
@@ -220,15 +217,6 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             )
             species_loss_weight = w / w.sum() * len(SPECIES_NAMES)
 
-        # GroupDRO (optional)
-        from framework.group_dro import GroupDROState
-        group_dro_state = None
-        if config.get("group_dro_eta", 0.0) > 0:
-            group_dro_state = GroupDROState(
-                num_domains=len(DOMAIN_NAMES),
-                eta=config["group_dro_eta"],
-            ).to(device)
-
         model = build_model(config, device)
         optimizer = AdamW(model.parameters(), lr=config["learning_rate"], weight_decay=config["weight_decay"])
         early_stopping_min_epoch = int(config.get("early_stopping_min_epoch", 10))
@@ -260,8 +248,6 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 dicl_tau=config.get("dicl_tau", 0.07),
                 sdal_weight=config.get("sdal_weight", 0.0),
                 sdal_sigma=config.get("sdal_sigma", 1.0),
-                wingbeat_weight=config.get("wingbeat_weight", 0.0),
-                group_dro_state=group_dro_state,
                 species_loss_weight=species_loss_weight,
             )
             val_metrics = evaluate_model(

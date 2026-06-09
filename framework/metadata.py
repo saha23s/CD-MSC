@@ -9,7 +9,6 @@ import re
 from pathlib import Path
 from typing import List, Tuple, Union
 
-import torch
 
 
 SPECIES_ID_TO_NAME = {
@@ -27,17 +26,6 @@ SPECIES_NAMES = list(SPECIES_ID_TO_NAME.values())
 SPECIES_TO_INDEX = {name: idx for idx, name in enumerate(SPECIES_NAMES)}
 DOMAIN_ID_TO_NAME = {"1": "D1", "2": "D2", "3": "D3", "4": "D4", "5": "D5"}
 
-# Female wingbeat fundamental frequencies (Hz) from literature, ordered by SPECIES_NAMES index.
-# Sources: Mukundarajan et al. 2017 (Sci. Transl. Med.), Brogdon 1994, Kiskin et al. 2020 (HumBugDB).
-# Normalized to [0, 1] over the 400–700 Hz reference range used in _wingbeat_mel_bins.
-# Index:           0     1     2     3     4     5     6     7     8
-# Species:       Aaeg  Aalb  Cqui  Agam  Aara  Adiu  Cpip  Amin  Astr
-_WINGBEAT_HZ = [500.0, 480.0, 450.0, 580.0, 560.0, 620.0, 400.0, 650.0, 460.0]
-_WB_LO, _WB_HI = 400.0, 700.0
-SPECIES_WINGBEAT_TARGETS: torch.Tensor = torch.tensor(
-    [(_hz - _WB_LO) / (_WB_HI - _WB_LO) for _hz in _WINGBEAT_HZ],
-    dtype=torch.float32,
-)
 DOMAIN_NAMES = list(DOMAIN_ID_TO_NAME.values())
 DOMAIN_TO_INDEX = {name: idx for idx, name in enumerate(DOMAIN_NAMES)}
 FILE_PATTERN = re.compile(r"^S_(\d+)_D_(\d+)_(\d+)$")
