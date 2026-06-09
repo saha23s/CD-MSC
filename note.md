@@ -114,10 +114,14 @@
 - setuptools downgrade to <74 needed for `pkg_resources` compat with tensorflow-hub 0.16.1 in Python 3.11.
 
 **Plan update:**
-- Best method results refreshed: `balanced_dann_dicl_proj128_tau02` (seed 42) D1-D4 mean BA_unseen=0.558 (plan had stale 0.378).
+- Best method results confirmed: `balanced_dann_dicl_proj128_tau02` (seed 42) D1-D4 mean test BA_unseen=0.378 (plan was correct; earlier session mistakenly read lodo_val instead of test_metrics.json).
 - 6 combo folds were partial (SLURM time cuts): fbsmix/wb005 D4, delta D3+D4, kitchen_sink D3+D4.
 
 **Jobs submitted 2026-06-09:**
 - 9796799: O1 Perch extraction (GPU, all 3 splits) → `Development_data/perch_feature/`
 - 9796800: O2 Perch LODO D1-D5 (depends on 9796799)
 - 9796801: P1 combo missing folds (6-way array: fbsmix/wb005/delta/kitchen_sink D3-D4 --overwrite)
+- CPU Perch inference is infeasible: ~7s/clip on first call, batch=32 takes >24s after warmup → 50+ hrs for 271k clips. GPU required (O1 sbatch requests gpu:1).
+- Most mosquito clips are <5s (e.g. S_1_D_1_1 = 0.46s) → exactly 1 Perch embedding per clip after zero-padding to 5s window. PerchClassifier mean-pool is effectively a no-op; model is a linear probe on a single 1280-d vector.
+- setuptools must be pinned <74 in the venv (`uv pip install "setuptools<74"`) — setuptools 82.x removed top-level `pkg_resources`, which tensorflow-hub 0.16.1 imports directly. Symptom: `ModuleNotFoundError: No module named 'pkg_resources'` on `import tensorflow_hub`.
+- TF was already installed in ~/.local/lib/python3.10 (system Python) but venv uses Python 3.11 (uv) with include-system-site-packages=false — must install via `uv pip install tensorflow tensorflow-hub` into the venv explicitly.

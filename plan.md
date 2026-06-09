@@ -95,13 +95,9 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 
 | ID | Config | Jobs | What it tests |
 |----|--------|------|---------------|
-| balanced_dicl_sdal_scol | lodo_balanced_dicl_sdal_scol | 9733089 | full DR-BioL loss + ScoL |
-| balanced_dicl_sdal_lam | lodo_balanced_dicl_sdal_lam | 9733096 | paper lambdas only, no ScoL |
-| lodo_delta | lodo_balanced_dann_dicl_proj128_tau02_delta | 9733097 | best + delta features (n_mels 64→128) |
-| balanced_dann_dicl_proj128_tau02_fbsmix | combo: best + FBS-Mix | 9733102 | best + FBS-Mix |
-| balanced_dann_dicl_proj128_tau02_wb005 | combo: best + wingbeat w=0.05 | 9733104 | best + wingbeat (low weight) |
-| best method random split × 3 seeds | MTRCNN balanced_dann_dicl_proj128_tau02 | 9733146 | random-split DSG vs LODO (3rd attempt, bug fixed) |
-| kitchen_sink | lodo_kitchen_sink | 9733181 | best + FBS-Mix + HPSS p=1.0 + clip_normalize |
+| perch_extract | — | 9796799 | Perch v2 GPU feature extraction, all 3 splits |
+| perch_lodo | lodo_perch | 9796800 (dep 9796799) | PerchClassifier LODO D1-D5, frozen 1280-dim embeddings |
+| combo_missing_folds | fbsmix/wb005/delta/kitchen_sink | 9796801 (array 1-6) | re-run D3/D4 folds cut off by SLURM; fbsmix D4, wb005 D4, delta D3+D4, kitchen_sink D3+D4 |
 
 ### Planned (configs committed, not yet submitted)
 
@@ -110,6 +106,7 @@ All BA_unseen/BA_seen/DSG = D1–D4 mean (D5 excluded). Seed=42 unless noted.
 | ast_balanced_dann_lam5 | lodo_ast_balanced_dann_lam5 | AST + balanced + DANN with higher λ=5 (AST may need stronger gradient reversal) |
 | ast_balanced_fbsmix | lodo_ast_balanced_fbsmix | AST + balanced + FBS-Mix (frequency-domain augmentation on AST features) |
 | balanced_dann_dicl_proj128_tau02_wb005_d4fix | lodo_balanced_dann_dicl_proj128_tau02_wb005_d4fix | best + wb005 with D4 fold fix |
+| perch_dann | lodo_perch (variant) | Perch + DANN — test whether domain adversarial helps on top of frozen pretrained features |
 
 ### Previously completed (ablations, results in table above)
 
@@ -134,9 +131,12 @@ balanced_dann_dicl_proj128, balanced_dann_dicl_proj128_tau02, balanced_dann_wing
 - [x] Kitchen-sink submitted: best + FBS-Mix + HPSS + clip_normalize (job 9733181)
 - [x] Combination experiments submitted: +fbsmix (9733102), +wb005 (9733104)
 - [x] Git branch `feature/lodo-ast-augmentation` pushed with all configs, paper/, scripts/, docs/ (outputs/ untracked)
+- [x] Perch v2 integration implemented (framework/perch_model.py, extract_perch_features.py, configs/lodo_perch.json)
+- [x] Perch extraction + LODO training submitted (jobs 9796799→9796800)
+- [x] Combo missing folds re-submitted (job 9796801, 6-way array)
+- [ ] Collect Perch results (jobs 9796799/9796800) — compare vs MTRCNN best 0.558
+- [ ] Collect combo results (job 9796801) — update Key Findings table with final D1-D4 means
 - [ ] Submit planned AST augmentation configs (ast_balanced_dann_lam5, ast_balanced_fbsmix, wb005_d4fix)
-- [ ] Collect results: random-split DSG, combo runs, delta, ScoL ablations, kitchen sink
-- [ ] Collect ScoL ablation results (jobs 9733089 vs 9733096) — compare lam-only vs lam+ScoL
 - [ ] t-SNE visualization of embeddings (balanced vs balanced_dann vs best) — no training cost
 - [ ] Produce submission file from best checkpoint (evaluate_ensemble.py or single-model)
 - [ ] Update ensemble_template.json with best members
@@ -173,6 +173,9 @@ balanced_dann_dicl_proj128, balanced_dann_dicl_proj128_tau02, balanced_dann_wing
 - Wingbeat features: `use_wingbeat_feature: true` (spectral centroid 400–700 Hz) + `wingbeat_weight: 0.5` (regression head)
 - Multi-seed: `train_lodo.py --seed N` overrides config seed; output dir includes seed in name
 - Ensemble: `evaluate_ensemble.py --members ensemble_template.json --eval-dir data/Evaluation_data/`
+- Perch extraction: `python extract_perch_features.py --config configs/lodo_perch.json` (requires TF + setuptools<74; GPU strongly recommended — CPU takes 50+ hrs for 271k clips)
+- Perch TF Hub API: `model.signatures['serving_default'](inputs=waveform_batch)` → `output_1` = embedding [B, 1280]. Not `.infer()` or direct call.
+- Perch config: `feature_root: ./Development_data/perch_feature`, `train_crop_seconds: null` (clips give 1 window each after 5s padding)
 
 ---
 
@@ -205,3 +208,5 @@ Key implementation detail: statistics computed on valid frames only (masked by l
 - Kitchen-sink combination: balanced_dann + FBSMix + HPSS + clip_normalize + best of embed/groupdro/wingbeat
 - Cross-domain contrastive pretraining (SimCLR on mosquito audio) before supervised fine-tune
 - DiCL diagnosis: firing 100% of batches with ~200 pairs — redundancy with DANN may be the issue rather than geometry
+- Perch v2 as frozen feature extractor: bird-sound pretraining (Xeno-Canto) → mosquito transfer. 1280-dim embeddings. Expect: either shared harmonic-structure features transfer, or zero mosquito signal means it underperforms MTRCNN. Interesting ablation point.
+- Perch + DANN: domain-adversarial training on top of frozen Perch — does balancing still help when features are pretrained?
