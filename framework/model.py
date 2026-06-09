@@ -8,7 +8,7 @@ Affiliation: Machine Learning Research Group, University of Oxford
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from framework.gradient_reversal import GradientReversalLayer
 from framework.mixstyle import MixStyle
