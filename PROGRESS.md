@@ -107,14 +107,46 @@ The model essentially only works on D5.
 
 ### Batch Balancing via WeightedRandomSampler (committed 2026-06-06)
 
-- `train.py` — when `batch_balance_domain=True`, builds a `WeightedRandomSampler`
-  with per-domain inverse-frequency weights so each domain appears ~equally per batch;
-  experiment name gets `_balanced` suffix
+- `train.py` — when `batch_balance_domain=True`, builds a `WeightedRandomSampler` with
+  **joint (species, domain) pair** inverse-frequency weights — rare (species, domain)
+  combinations get highest weight. D4 clips (~80 samples) are oversampled ~500× per epoch.
+  Addresses both domain imbalance AND per-species coverage in scarce field domains.
+  Experiment name gets `_balanced` suffix.
 - `colab_dann.ipynb` — `BALANCE_BATCHES=True/False` parameter
+
+### SpecAugment (committed 2026-06-08)
+
+- `framework/dataset.py` — `_spec_augment()` applies random time masking (0–40 frames) and
+  frequency masking (0–10 mel bins) after crop+normalize, training only.
+  `self.spec_augment = spec_augment and training` — automatically off at eval.
+- `train.py` — `spec_augment` params passed from config to dataset; `_specaug` suffix in name
+- `colab_dann.ipynb` — `SPEC_AUGMENT=True/False` parameter (default True)
 
 ---
 
 ## Experiments Run
+
+### Experiment 5 — C-DANN alpha=0.3 + Balanced + Batch=128 + SpecAugment (2026-06-08) ⚠️ WORSE THAN EXP 4
+
+| Metric | Baseline mean | Exp 4 (prev best) | Exp 5 | Change vs Exp 4 |
+|--------|--------------|-------------------|-------|-----------------|
+| BAseen | 0.8806 | 0.7950 | 0.7227 | −0.072 |
+| **BAunseen** | **0.1751** | **0.2626** | **0.2308** | **−0.032** |
+| **DSG** | **0.7055** | **0.5324** | **0.4919** | **−0.041** |
+
+Adding SpecAugment (time_mask=40, freq_mask=10) and doubling batch size 64→128 degraded BAunseen vs Exp 4.
+Two likely causes:
+1. **SpecAugment too aggressive for rare species**: ~80 D4 clips are oversampled heavily. Randomly masking
+   up to 10 mel bins of 64 frequently destroys wingbeat harmonics in the (species, domain) pairs that
+   matter most for BAunseen. The signal band is narrow and masks are not domain-aware.
+2. **Fewer gradient updates per epoch**: `WeightedRandomSampler` keeps `num_samples=len(train_dataset)`;
+   batch=128 gives half as many `.backward()` calls per epoch as batch=64.
+
+DSG improved slightly (0.5324→0.4919) only because BAseen fell faster than BAunseen — not a genuine gain.
+**Lesson**: SpecAugment needs careful tuning (smaller masks, or majority-domain-only) when rare field clips
+are already scarce and heavily oversampled.
+
+---
 
 ### Experiment 4 — C-DANN alpha=0.3 + Balanced Batches (2026-06-08) ✅ BEST SO FAR
 
@@ -366,18 +398,95 @@ If results with 0.3 are stable, 0.5 is a reasonable next experiment.
 
 ## Current Plan (priority order)
 
-### 1. C-DANN alpha=0.1 + balanced batches ← NEXT RUN
-BAseen dropped to 0.795 with alpha=0.3 — gentler adversarial pressure may recover
-some seen-domain performance without losing much BAunseen.
-Set `DANN_ALPHA_MAX = 0.1`, `CDANN = True`, `BALANCE_BATCHES = True`.
+### 1. Frame Gating — Exp 6 ← NEXT IMPLEMENTATION
+Learned per-frame attention weights gate each frame's contribution to the final embedding.
+Motivation: not all frames carry species signal. Background frames and domain-artefact frames
+(equipment hum, wind noise in field recordings) dilute the pooled embedding. A lightweight
+attention module lets the model learn to focus on frames containing wingbeat signal.
 
-### 2. Regular DANN alpha=0.3 + balanced batches
-Isolate whether C-DANN is contributing or if balancing alone explains the Exp 4 jump.
-Set `CDANN = False`, `DANN_ALPHA_MAX = 0.3`, `BALANCE_BATCHES = True`.
+**Implementation sketch** (inside `MTRCNNBranch` or before `masked_mean_max`):
+```
+frame_scores = Linear(64 → 1)(branch_output)   # [B, T, 1] gate logits
+gate = softmax(frame_scores, dim=1)             # normalised attention weights
+embedding = sum(gate * branch_output, dim=1)    # weighted mean instead of mean+max
+```
+The gate is trained end-to-end — no separate objective needed. Expected benefit for unseen
+field domains: model learns to ignore variable background noise and focus on wingbeat bursts.
 
-### 3. Download evaluation set and generate submission predictions
-Evaluation set on Zenodo (link in README.md line 9). Must be done before 2026-06-15.
-Use `predict.py` or `evaluate.py` once we have a best-performing checkpoint.
+### 2. SpecAugment re-tuning
+Exp 5 showed default masks (time=40, freq=10) hurt BAunseen. Options:
+- Smaller masks: `time_mask=20, freq_mask=5`, keep batch=64
+- Domain-aware masking: apply SpecAugment only to D5 clips; field clips are too scarce to mask
+
+### 3. C-DANN alpha=0.1 + balanced batches
+Gentler adversarial pressure. C-DANN at 0.3 was below regular DANN without balancing; with
+balancing the combination improved (Exp 4). alpha=0.1 may recover BAseen without sacrificing BAunseen.
+
+### 4. Regular DANN + balanced batches (ablation)
+Set `CDANN=False`, `DANN_ALPHA_MAX=0.3`, `BALANCE_BATCHES=True`. Isolates whether C-DANN
+is contributing or if balancing alone accounts for the Exp 4 jump.
+
+### 5. Download evaluation set and generate submission predictions
+Evaluation set on Zenodo (link in README.md line 9). **Must be done before 2026-06-15.**
+
+---
+
+## Preprocessing Ideas (Brainstormed, Not Yet Implemented)
+
+All of these target the core problem: D5 lab conditions look different from D1–D4 field conditions.
+The goal is either to make D5 training clips look more like field recordings, or to strip
+recording-environment information from both.
+
+### Signal Processing (require raw audio or re-extraction)
+
+**HPSS (Harmonic-Percussive Source Separation)**
+Decomposes audio into tonal (harmonic) and transient/noise (percussive) components. Keeping only the
+harmonic component suppresses broadband background noise (wind, rain, traffic) which is the main
+acoustic difference between D5 and field domains. Mosquito wingbeats are tonal — dominant harmonic
+at ~300–800 Hz. Requires raw audio; adds ~100ms per clip; needs re-running `extract_features.py`.
+
+**PCEN (Per-Channel Energy Normalisation)**
+Replaces log compression in feature extraction. Uses an exponential moving average to normalise
+against the local noise floor, making features more robust to variable background noise levels.
+Implemented in `librosa.pcen`. Requires re-running `extract_features.py` (new `config_signature`).
+
+**Gaussian Noise Injection**
+Add random white/pink noise to D5 clips during training to simulate field recording conditions.
+Simple, cheap, no re-extraction needed. Can approximate field domain SNR statistics.
+
+**Time Stretching / Speed Perturbation**
+Vary playback speed ±5–10%. Changes wingbeat frequency slightly — broadens training distribution.
+**Caution**: species wingbeat frequency IS the discriminative feature; aggressive stretching
+(>10%) may shift a sample across a species class boundary.
+
+### Feature-Space Methods (applicable to existing `.pkl` features)
+
+**CMN (Cepstral Mean Normalisation)**
+Subtract per-clip mean across time in mel/cepstral domain. Removes microphone and channel
+effects (DC offset in mel space). Fast — applicable directly to loaded features without
+re-extraction. Risk: removes low-frequency information that may carry species signal.
+
+**Histogram Matching / Feature Distribution Alignment**
+Match the mel-spectrogram statistics of D5 clips to D1–D4 domain statistics.
+Variants:
+- *Mean/variance alignment*: shift and scale each frequency bin of D5 clips to match D1–D4
+  mean and std. Lightweight; can be computed from existing pkl statistics.
+- *Full histogram matching*: match the per-bin cumulative distribution of D5 to D1–D4.
+  More aggressive; preserves rank ordering.
+This is essentially feature-space domain randomisation — the model sees D5 content with
+D1–D4 spectral "clothing" applied as augmentation during training.
+
+### Audio-Space Domain Transfer
+
+**Fourier Domain Adaptation (FDA — Yang & Soatto 2020)**
+Swap the amplitude spectrum of a D5 clip's STFT with one sampled from a D1–D4 clip,
+keeping the D5 phase intact. The result has D5's temporal structure but D1–D4's
+frequency coloring (noise floor, spectral tilt).
+- Implemented at training time by sampling a random D1–D4 clip per D5 clip in each batch
+- Swap only low-frequency components (below threshold β in the 2D STFT) to preserve
+  high-frequency wingbeat detail
+- Requires raw audio in the training loop; eval can still use precomputed `.pkl` features
+- Most direct method for domain appearance transfer; well-studied in vision (less so in audio)
 
 ---
 
