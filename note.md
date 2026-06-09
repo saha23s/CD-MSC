@@ -102,3 +102,22 @@
 - Experiment timing (single LODO fold, 1 GPU, early stop min10/pati5): MTRCNN baseline ~27 min (14 epochs, ~1:50/epoch); MTRCNN balanced+DANN+DicL ~23 min (15 epochs, ~1:30/epoch); AST base ~1h 43 min (14 epochs, ~7.3 min/epoch). AST is ~4× slower per epoch than MTRCNN.
 - Scale-up: MTRCNN — all 5 folds × 1 seed sequential ~2.5h; 5 seeds × 5 folds sequential ~12h (or ~2.5h with 5 parallel SLURM jobs). AST — all 5 folds × 1 seed ~8-10h (overnight); 5 seeds × 5 folds ~10h with 5 parallel jobs. AST multi-seed sweeps only feasible for selected configs, not full ablation matrix.
 
+
+## 2026-06-09
+
+**Perch v2 integration implemented.**
+
+- `framework/perch_model.py`: `PerchClassifier` — mean-pools [B, T_windows, 1280] Perch embeddings, LayerNorm → Linear(1280→128) → GELU → Dropout → species/domain heads. Supports GRL and contrastive proj head. 168K trainable params.
+- `extract_perch_features.py`: standalone extraction script. Loads 8kHz audio, resamples to 32kHz (librosa), segments into non-overlapping 5s windows (pads last), batches through Perch v2 TF Hub model (`bird-vocalization-classifier/4`, `serving_default` signature, `inputs` kwarg, `output_1` = embedding). Saves [n_windows, 1280] arrays in same pickle format. Cache-by-config-hash, `--overwrite` flag.
+- `configs/lodo_perch.json`: `model_type: "perch"`, `feature_root: ./Development_data/perch_feature`, `perch_embed_dim: 128`, `train_crop_seconds: null` (no temporal crop — clips give 1 window each).
+- TF API fix: model uses `signatures['serving_default'](inputs=...)`, outputs `output_0`=logits [B,10932], `output_1`=embedding [B,1280]. Not `.infer()` or direct call.
+- setuptools downgrade to <74 needed for `pkg_resources` compat with tensorflow-hub 0.16.1 in Python 3.11.
+
+**Plan update:**
+- Best method results refreshed: `balanced_dann_dicl_proj128_tau02` (seed 42) D1-D4 mean BA_unseen=0.558 (plan had stale 0.378).
+- 6 combo folds were partial (SLURM time cuts): fbsmix/wb005 D4, delta D3+D4, kitchen_sink D3+D4.
+
+**Jobs submitted 2026-06-09:**
+- 9796799: O1 Perch extraction (GPU, all 3 splits) → `Development_data/perch_feature/`
+- 9796800: O2 Perch LODO D1-D5 (depends on 9796799)
+- 9796801: P1 combo missing folds (6-way array: fbsmix/wb005/delta/kitchen_sink D3-D4 --overwrite)

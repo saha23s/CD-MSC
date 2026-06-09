@@ -191,5 +191,9 @@ def build_model(config: dict, device: torch.device):
         from framework.ast_model import ASTClassifier
         return ASTClassifier(config, n_species, n_domain).to(device)
 
+    if model_type == "perch":
+        from framework.perch_model import PerchClassifier
+        return PerchClassifier(config, n_species, n_domain).to(device)
+
     from framework.model import MTRCNNClassifier
     return MTRCNNClassifier(config, n_species, n_domain).to(device)
