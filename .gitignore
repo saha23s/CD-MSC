@@ -10,4 +10,4 @@ logs/
 job_log.md
 .ipynb_checkpoints/
 paper/figures/
-.venv/
+.venv
