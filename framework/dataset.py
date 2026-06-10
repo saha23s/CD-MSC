@@ -58,6 +58,8 @@ class MosquitoFeatureDataset(Dataset):
         spec_augment: bool = False,
         spec_augment_time_mask: int = 40,
         spec_augment_freq_mask: int = 10,
+        cmn: bool = False,
+        d5_noise_std: float = 0.0,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -68,6 +70,8 @@ class MosquitoFeatureDataset(Dataset):
         self.spec_augment = spec_augment and training
         self.spec_augment_time_mask = spec_augment_time_mask
         self.spec_augment_freq_mask = spec_augment_freq_mask
+        self.cmn = cmn
+        self.d5_noise_std = d5_noise_std
         self.feature_mean = None
         self.feature_std = None
         if self.normalize_features:
@@ -101,11 +105,23 @@ class MosquitoFeatureDataset(Dataset):
             return feature
         return (feature - self.feature_mean) / np.maximum(self.feature_std, 1e-8)
 
+    def _cmn(self, feature: np.ndarray) -> np.ndarray:
+        # Subtract per-clip time-axis mean from each mel bin — removes channel/mic offset
+        return feature - feature.mean(axis=0, keepdims=True)
+
+    def _d5_noise(self, feature: np.ndarray) -> np.ndarray:
+        # Add Gaussian noise to D5 (lab) clips during training to simulate field SNR
+        return feature + np.random.normal(0.0, self.d5_noise_std, feature.shape).astype(np.float32)
+
     def __getitem__(self, index: int) -> Dict:
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
         feature = self._normalize(feature)
+        if self.cmn:
+            feature = self._cmn(feature)
+        if self.training and self.d5_noise_std > 0.0 and sample["domain_label"] == 4:
+            feature = self._d5_noise(feature)
         if self.spec_augment:
             feature = self._spec_augment(feature)
         return {

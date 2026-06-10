@@ -19,5 +19,7 @@
   "learning_rate": 0.001,
   "weight_decay": 0.0001,
   "dropout": 0.2,
-  "device": "auto"
+  "device": "auto",
+  "cmn": true,
+  "d5_noise_std": 0.1
 }

@@ -177,6 +177,8 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             spec_augment=config.get("spec_augment", False),
             spec_augment_time_mask=config.get("spec_augment_time_mask", 40),
             spec_augment_freq_mask=config.get("spec_augment_freq_mask", 10),
+            cmn=config.get("cmn", False),
+            d5_noise_std=config.get("d5_noise_std", 0.0),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -186,6 +188,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_validation_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            cmn=config.get("cmn", False),
         )
         print(f"loading from {split_feature_path(config, 'training')}")
         print(f"loading from {split_feature_path(config, 'validation')}")
