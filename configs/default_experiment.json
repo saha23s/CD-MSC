@@ -20,6 +20,6 @@
   "weight_decay": 0.0001,
   "dropout": 0.2,
   "device": "auto",
-  "cmn": true,
-  "d5_noise_std": 0.1
+  "cmn": false,
+  "d5_noise_std": 0.0
 }

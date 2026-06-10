@@ -311,8 +311,24 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
         logger.info("Evaluating best checkpoint outputs.")
         best_eval = evaluate_and_save_outputs(config, best_checkpoint_path, output_dir, "best_model_eval")
+        _bm = best_eval["test_metrics"]
+        logger.info(
+            "Best model  | val_BA=%.4f | test BA_seen=%.4f  BA_unseen=%.4f  DSG=%.4f",
+            best_val_metrics.get("species_balanced_accuracy", float("nan")),
+            _bm.get("BA_seen", float("nan")),
+            _bm.get("BA_unseen", float("nan")),
+            _bm.get("DSG", float("nan")),
+        )
         logger.info("Evaluating final checkpoint outputs.")
         final_eval = evaluate_and_save_outputs(config, final_checkpoint_path, output_dir, "final_model_eval")
+        _fm = final_eval["test_metrics"]
+        logger.info(
+            "Final model | val_BA=%.4f | test BA_seen=%.4f  BA_unseen=%.4f  DSG=%.4f",
+            last_val_metrics.get("species_balanced_accuracy", float("nan")),
+            _fm.get("BA_seen", float("nan")),
+            _fm.get("BA_unseen", float("nan")),
+            _fm.get("DSG", float("nan")),
+        )
 
         return {
             "status": "completed",
