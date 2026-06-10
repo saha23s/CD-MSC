@@ -57,6 +57,10 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_balanced"
     if config.get("spec_augment", False):
         name += "_specaug"
+    if config.get("cmn", False):
+        name += "_cmn"
+    if config.get("d5_noise_std", 0.0) > 0.0:
+        name += f"_noise{config['d5_noise_std']}"
     return name
 
 
