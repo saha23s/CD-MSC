@@ -107,6 +107,8 @@ def evaluate_checkpoint(config: Dict, checkpoint_path: Union[str, Path], split: 
         normalize_features=config["normalize_features"],
         expected_feature_signature=expected_feature_signature,
         expected_stats_signature=expected_training_stats_signature,
+        cmn=config.get("cmn", False),
+        use_delta=config.get("use_delta", False),
     )
     eval_batch_size = config.get("eval_batch_size", config["batch_size"])
     dataloader = make_loader(dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)

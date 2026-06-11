@@ -8,7 +8,7 @@ Affiliation: Machine Learning Research Group, University of Oxford
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class ConvStage(nn.Module):
@@ -107,11 +107,46 @@ def masked_mean_max(x: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
     return masked_mean + masked_max
 
 
+class GRL(torch.autograd.Function):
+    """Gradient Reversal Layer for DANN training (Ganin et al. 2016).
+
+    In the forward pass this is an identity. In the backward pass the gradient
+    is scaled by -alpha, pushing the backbone toward domain-invariant features.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, alpha: float) -> torch.Tensor:
+        ctx.alpha = alpha
+        return x
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor):
+        return -ctx.alpha * grad, None
+
+
+class SupConProjectionHead(nn.Module):
+    """Projection head for supervised contrastive learning (SupCon / LScoL).
+
+    Discarded after training — the 32-dim embedding feeds the species classifier.
+    """
+
+    def __init__(self, input_dim: int = 32, hidden_dim: int = 64, output_dim: int = 128) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, output_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.normalize(self.net(x), dim=-1)
+
+
 class MTRCNNClassifier(nn.Module):
     def __init__(self, config, num_species_classes: int, num_domain_classes: int) -> None:
         super().__init__()
-        self.input_bn = nn.BatchNorm2d(config["n_mels"])
-
+        model_n_mels = config.get("model_n_mels", config["n_mels"])
+        self.input_bn = nn.BatchNorm2d(model_n_mels)
         self.kernel_3_branch = MTRCNNBranch(
             stage_specs=[
                 ((3, 3), (1, 1), (1, 1)),
@@ -119,7 +154,7 @@ class MTRCNNClassifier(nn.Module):
                 ((3, 3), (3, 1), (3, 0)),
             ],
             dropout=config["dropout"],
-            n_mels=config["n_mels"],
+            n_mels=model_n_mels,
         )
         self.kernel_5_branch = MTRCNNBranch(
             stage_specs=[
@@ -128,7 +163,7 @@ class MTRCNNClassifier(nn.Module):
                 ((5, 5), (3, 1), (6, 1)),
             ],
             dropout=config["dropout"],
-            n_mels=config["n_mels"],
+            n_mels=model_n_mels,
         )
         self.kernel_7_branch = MTRCNNBranch(
             stage_specs=[
@@ -137,14 +172,19 @@ class MTRCNNClassifier(nn.Module):
                 ((7, 7), (3, 1), (9, 2)),
             ],
             dropout=config["dropout"],
-            n_mels=config["n_mels"],
+            n_mels=model_n_mels,
         )
-
+        self.cdann = config.get("cdann", False)
+        self.num_species_classes = num_species_classes
         self.embedding = nn.Linear(64 * 3, 32)
         self.species_classifier = nn.Linear(32, num_species_classes)
-        self.domain_classifier = nn.Linear(32, num_domain_classes)
+        domain_input_size = 32 + num_species_classes if self.cdann else 32
+        self.domain_classifier = nn.Linear(domain_input_size, num_domain_classes)
+        self.projection_head = (
+            SupConProjectionHead() if config.get("supcon_weight", 0.0) > 0.0 else None
+        )
 
-    def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, features: torch.Tensor, lengths: torch.Tensor, alpha: Optional[float] = None, species_labels: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         x = features.unsqueeze(1).transpose(1, 3)
         x = self.input_bn(x)
         x = x.transpose(1, 3)
@@ -156,7 +196,14 @@ class MTRCNNClassifier(nn.Module):
         ]
         features = torch.cat(branch_outputs, dim=1)
         embedding = F.gelu(self.embedding(features))
-        return {
+        domain_input = GRL.apply(embedding, alpha) if alpha is not None else embedding
+        if self.cdann and species_labels is not None:
+            species_onehot = F.one_hot(species_labels, num_classes=self.num_species_classes).float()
+            domain_input = torch.cat([domain_input, species_onehot], dim=-1)
+        result = {
             "species_logits": self.species_classifier(embedding),
-            "domain_logits": self.domain_classifier(embedding),
+            "domain_logits": self.domain_classifier(domain_input),
         }
+        if self.projection_head is not None:
+            result["projection"] = self.projection_head(embedding)
+        return result

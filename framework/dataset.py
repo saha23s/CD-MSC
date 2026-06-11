@@ -55,6 +55,12 @@ class MosquitoFeatureDataset(Dataset):
         normalize_features: bool = True,
         expected_feature_signature: Optional[str] = None,
         expected_stats_signature: Optional[str] = None,
+        spec_augment: bool = False,
+        spec_augment_time_mask: int = 40,
+        spec_augment_freq_mask: int = 10,
+        cmn: bool = False,
+        d5_noise_std: float = 0.0,
+        use_delta: bool = False,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -62,6 +68,12 @@ class MosquitoFeatureDataset(Dataset):
         self.training = training
         self.max_train_frames = max_train_frames
         self.normalize_features = normalize_features and feature_stats_path is not None
+        self.spec_augment = spec_augment and training
+        self.spec_augment_time_mask = spec_augment_time_mask
+        self.spec_augment_freq_mask = spec_augment_freq_mask
+        self.cmn = cmn
+        self.d5_noise_std = d5_noise_std
+        self.use_delta = use_delta
         self.feature_mean = None
         self.feature_std = None
         if self.normalize_features:
@@ -70,6 +82,19 @@ class MosquitoFeatureDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.samples)
+
+    def _spec_augment(self, feature: np.ndarray) -> np.ndarray:
+        T, F = feature.shape
+        out = feature.copy()
+        t = random.randint(0, self.spec_augment_time_mask)
+        if t > 0 and T > t:
+            t0 = random.randint(0, T - t)
+            out[t0:t0 + t, :] = 0.0
+        f = random.randint(0, self.spec_augment_freq_mask)
+        if f > 0 and F > f:
+            f0 = random.randint(0, F - f)
+            out[:, f0:f0 + f] = 0.0
+        return out
 
     def _maybe_crop(self, feature: np.ndarray) -> np.ndarray:
         if not self.training or not self.max_train_frames or feature.shape[0] <= self.max_train_frames:
@@ -82,11 +107,34 @@ class MosquitoFeatureDataset(Dataset):
             return feature
         return (feature - self.feature_mean) / np.maximum(self.feature_std, 1e-8)
 
+    def _cmn(self, feature: np.ndarray) -> np.ndarray:
+        # Subtract per-clip time-axis mean from each mel bin — removes channel/mic offset
+        return feature - feature.mean(axis=0, keepdims=True)
+
+    def _d5_noise(self, feature: np.ndarray) -> np.ndarray:
+        # Add Gaussian noise to D5 (lab) clips during training to simulate field SNR
+        return feature + np.random.normal(0.0, self.d5_noise_std, feature.shape).astype(np.float32)
+
+    def _compute_delta(self, feature: np.ndarray) -> np.ndarray:
+        # Compute first-order time-axis delta and concatenate with mel along frequency axis.
+        # Delta is computed on already-normalised mel so global mean cancels in the difference.
+        # Result: [T, 2*F] where first F cols are mel, next F cols are temporal differences.
+        delta = np.diff(feature, axis=0, prepend=feature[:1]).astype(np.float32)
+        return np.concatenate([feature, delta], axis=1)
+
     def __getitem__(self, index: int) -> Dict:
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
         feature = self._normalize(feature)
+        if self.cmn:
+            feature = self._cmn(feature)
+        if self.training and self.d5_noise_std > 0.0 and sample["domain_label"] == 4:
+            feature = self._d5_noise(feature)
+        if self.use_delta:
+            feature = self._compute_delta(feature)
+        if self.spec_augment:
+            feature = self._spec_augment(feature)
         return {
             "file_id": sample["file_id"],
             "feature": torch.tensor(feature, dtype=torch.float32),

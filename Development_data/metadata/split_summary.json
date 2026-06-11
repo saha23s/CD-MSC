@@ -1,0 +1,88 @@
+{
+  "train_test_seed": 42,
+  "validation_seed": 43,
+  "validation_ratio_within_trainval": 0.12498330208712395,
+  "counts": {
+    "train": 213647,
+    "validation": 30516,
+    "test": 27217,
+    "trainval": 244163,
+    "all_total": 271380
+  },
+  "unseen_domain_by_species": {
+    "Aedes aegypti": "D3",
+    "Aedes albopictus": "D2",
+    "Culex quinquefasciatus": "D1",
+    "Anopheles gambiae": "D1",
+    "Anopheles arabiensis": "D1",
+    "Anopheles dirus": "D4",
+    "Culex pipiens": "D3",
+    "Anopheles minimus": "D2",
+    "Anopheles stephensi": "D4"
+  },
+  "species_summary": [
+    {
+      "species": "Aedes aegypti",
+      "unseen_domain": "D3",
+      "species_total": 81587,
+      "test_total": 8159,
+      "trainval_total": 73428
+    },
+    {
+      "species": "Aedes albopictus",
+      "unseen_domain": "D2",
+      "species_total": 18517,
+      "test_total": 1852,
+      "trainval_total": 16665
+    },
+    {
+      "species": "Culex quinquefasciatus",
+      "unseen_domain": "D1",
+      "species_total": 72056,
+      "test_total": 7206,
+      "trainval_total": 64850
+    },
+    {
+      "species": "Anopheles gambiae",
+      "unseen_domain": "D1",
+      "species_total": 46998,
+      "test_total": 4700,
+      "trainval_total": 42298
+    },
+    {
+      "species": "Anopheles arabiensis",
+      "unseen_domain": "D1",
+      "species_total": 21117,
+      "test_total": 2112,
+      "trainval_total": 19005
+    },
+    {
+      "species": "Anopheles dirus",
+      "unseen_domain": "D4",
+      "species_total": 127,
+      "test_total": 40,
+      "trainval_total": 87
+    },
+    {
+      "species": "Culex pipiens",
+      "unseen_domain": "D3",
+      "species_total": 29754,
+      "test_total": 2975,
+      "trainval_total": 26779
+    },
+    {
+      "species": "Anopheles minimus",
+      "unseen_domain": "D2",
+      "species_total": 550,
+      "test_total": 99,
+      "trainval_total": 451
+    },
+    {
+      "species": "Anopheles stephensi",
+      "unseen_domain": "D4",
+      "species_total": 674,
+      "test_total": 74,
+      "trainval_total": 600
+    }
+  ]
+}

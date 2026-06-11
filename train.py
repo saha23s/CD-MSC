@@ -11,6 +11,7 @@ from pathlib import Path
 
 import torch
 from torch.optim import AdamW
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
 from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
@@ -46,7 +47,25 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     epochs = int(config["epochs"])
     min_epoch = int(config.get("early_stopping_min_epoch", 10))
     patience = int(config.get("early_stopping_patience", 10))
-    return f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    name = f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    dann_alpha_max = config.get("dann_alpha_max", 0.0)
+    if dann_alpha_max > 0.0:
+        name += f"_dann{dann_alpha_max}"
+    if config.get("cdann", False):
+        name += "_cdann"
+    if config.get("batch_balance_domain", False):
+        name += "_balanced"
+    if config.get("spec_augment", False):
+        name += "_specaug"
+    if config.get("cmn", False):
+        name += "_cmn"
+    if config.get("d5_noise_std", 0.0) > 0.0:
+        name += f"_noise{config['d5_noise_std']}"
+    if config.get("use_delta", False):
+        name += "_delta"
+    if config.get("supcon_weight", 0.0) > 0.0:
+        name += f"_supcon{config['supcon_weight']}"
+    return name
 
 
 def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: Path, model_name: str) -> dict:
@@ -76,6 +95,8 @@ def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: P
 
 def train_experiment(config: dict, overwrite: bool = False) -> dict:
     config = deepcopy(config)
+    if config.get("use_delta", False):
+        config["model_n_mels"] = config["n_mels"] * 2
     config["experiment_name"] = experiment_name_for_seed(config["seed"], config)
     set_seed(config["seed"])
     device = choose_device(config["device"])
@@ -163,6 +184,12 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_training_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            spec_augment=config.get("spec_augment", False),
+            spec_augment_time_mask=config.get("spec_augment_time_mask", 40),
+            spec_augment_freq_mask=config.get("spec_augment_freq_mask", 10),
+            cmn=config.get("cmn", False),
+            d5_noise_std=config.get("d5_noise_std", 0.0),
+            use_delta=config.get("use_delta", False),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -172,13 +199,31 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_validation_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            cmn=config.get("cmn", False),
+            use_delta=config.get("use_delta", False),
         )
         print(f"loading from {split_feature_path(config, 'training')}")
         print(f"loading from {split_feature_path(config, 'validation')}")
         if config["normalize_features"]:
             print(f"loading from {training_stats_path(config)}")
 
-        train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
+        if config.get("batch_balance_domain", False):
+            domain_labels = torch.tensor([s["domain_label"] for s in train_dataset.samples])
+            species_labels_all = torch.tensor([s["species_label"] for s in train_dataset.samples])
+            pair_keys = species_labels_all * len(DOMAIN_NAMES) + domain_labels
+            pair_counts = torch.bincount(pair_keys, minlength=len(SPECIES_NAMES) * len(DOMAIN_NAMES)).float().clamp(min=1)
+            weights = 1.0 / pair_counts[pair_keys]
+            sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset), replacement=True)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=config["batch_size"],
+                sampler=sampler,
+                num_workers=config["num_workers"],
+                collate_fn=pad_collate_fn,
+                pin_memory=device.type == "cuda",
+            )
+        else:
+            train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
         eval_batch_size = config.get("eval_batch_size", config["batch_size"])
         val_loader = make_loader(val_dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)
 
@@ -198,6 +243,11 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 dataloader=train_loader,
                 optimizer=optimizer,
                 device=device,
+                epoch=epoch,
+                total_epochs=config["epochs"],
+                dann_alpha_max=config.get("dann_alpha_max", 0.0),
+                supcon_weight=config.get("supcon_weight", 0.0),
+                supcon_temperature=config.get("supcon_temperature", 0.1),
             )
             val_metrics = evaluate_model(
                 model=model,
@@ -213,6 +263,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 "train_loss": round(train_metrics["loss"], 6),
                 "train_species_loss": round(train_metrics["species_loss"], 6),
                 "train_domain_loss": round(train_metrics["domain_loss"], 6),
+                "train_supcon_loss": round(train_metrics["supcon_loss"], 6),
                 "train_species_accuracy": round(train_metrics["species_accuracy"], 6),
                 "train_domain_accuracy": round(train_metrics["domain_accuracy"], 6),
                 "val_loss": round(val_metrics["loss"], 6),
@@ -271,8 +322,24 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
         logger.info("Evaluating best checkpoint outputs.")
         best_eval = evaluate_and_save_outputs(config, best_checkpoint_path, output_dir, "best_model_eval")
+        _bm = best_eval["test_metrics"]
+        logger.info(
+            "Best model  | val_BA=%.4f | test BA_seen=%.4f  BA_unseen=%.4f  DSG=%.4f",
+            best_val_metrics.get("species_balanced_accuracy", float("nan")),
+            _bm.get("BA_seen", float("nan")),
+            _bm.get("BA_unseen", float("nan")),
+            _bm.get("DSG", float("nan")),
+        )
         logger.info("Evaluating final checkpoint outputs.")
         final_eval = evaluate_and_save_outputs(config, final_checkpoint_path, output_dir, "final_model_eval")
+        _fm = final_eval["test_metrics"]
+        logger.info(
+            "Final model | val_BA=%.4f | test BA_seen=%.4f  BA_unseen=%.4f  DSG=%.4f",
+            last_val_metrics.get("species_balanced_accuracy", float("nan")),
+            _fm.get("BA_seen", float("nan")),
+            _fm.get("BA_unseen", float("nan")),
+            _fm.get("DSG", float("nan")),
+        )
 
         return {
             "status": "completed",
