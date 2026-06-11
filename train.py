@@ -63,6 +63,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += f"_noise{config['d5_noise_std']}"
     if config.get("use_delta", False):
         name += "_delta"
+    if config.get("supcon_weight", 0.0) > 0.0:
+        name += f"_supcon{config['supcon_weight']}"
     return name
 
 
@@ -244,6 +246,8 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 epoch=epoch,
                 total_epochs=config["epochs"],
                 dann_alpha_max=config.get("dann_alpha_max", 0.0),
+                supcon_weight=config.get("supcon_weight", 0.0),
+                supcon_temperature=config.get("supcon_temperature", 0.1),
             )
             val_metrics = evaluate_model(
                 model=model,
@@ -259,6 +263,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 "train_loss": round(train_metrics["loss"], 6),
                 "train_species_loss": round(train_metrics["species_loss"], 6),
                 "train_domain_loss": round(train_metrics["domain_loss"], 6),
+                "train_supcon_loss": round(train_metrics["supcon_loss"], 6),
                 "train_species_accuracy": round(train_metrics["species_accuracy"], 6),
                 "train_domain_accuracy": round(train_metrics["domain_accuracy"], 6),
                 "val_loss": round(val_metrics["loss"], 6),

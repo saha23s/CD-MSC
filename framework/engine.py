@@ -157,12 +157,35 @@ def dann_alpha(epoch: int, total_epochs: int, alpha_max: float) -> float:
     return alpha_max * (2.0 / (1.0 + math.exp(-10.0 * p)) - 1.0)
 
 
-def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_epochs: int = 100, dann_alpha_max: float = 0.0) -> dict:
+def supcon_loss(projections: torch.Tensor, labels: torch.Tensor, temperature: float = 0.1) -> torch.Tensor:
+    """Supervised contrastive loss (Khosla et al. 2020).
+
+    Uses all same-class samples in the batch as positives — no augmented-view pairs needed.
+    Anchors with no in-batch positive are excluded from the loss.
+    projections: [B, D] L2-normalised embeddings from the projection head
+    labels: [B] integer species labels
+    """
+    B = projections.shape[0]
+    sim = torch.mm(projections, projections.T) / temperature
+    self_mask = torch.eye(B, dtype=torch.bool, device=projections.device)
+    pos_mask = (labels.unsqueeze(1) == labels.unsqueeze(0)) & ~self_mask
+    log_denom = torch.logsumexp(sim.masked_fill(self_mask, float("-inf")), dim=1, keepdim=True)
+    log_prob = sim - log_denom
+    num_pos = pos_mask.float().sum(dim=1)
+    has_pos = num_pos > 0
+    if not has_pos.any():
+        return projections.sum() * 0.0
+    per_anchor = -(log_prob * pos_mask.float()).sum(dim=1) / num_pos.clamp(min=1)
+    return per_anchor[has_pos].mean()
+
+
+def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_epochs: int = 100, dann_alpha_max: float = 0.0, supcon_weight: float = 0.0, supcon_temperature: float = 0.1) -> dict:
     alpha = dann_alpha(epoch, total_epochs, dann_alpha_max) if dann_alpha_max > 0.0 else None
     model.train()
     total_loss = 0.0
     total_species_loss = 0.0
     total_domain_loss = 0.0
+    total_supcon_loss = 0.0
     total_species_correct = 0
     total_domain_correct = 0
     total_items = 0
@@ -181,6 +204,11 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_
         species_loss = F.cross_entropy(species_logits, species_labels)
         domain_loss = F.cross_entropy(domain_logits, domain_labels)
         loss = species_loss + domain_loss
+        sc_loss_val = 0.0
+        if supcon_weight > 0.0 and "projection" in outputs:
+            sc = supcon_loss(outputs["projection"], species_labels, supcon_temperature)
+            loss = loss + supcon_weight * sc
+            sc_loss_val = sc.item()
         loss.backward()
         optimizer.step()
 
@@ -191,6 +219,7 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_
         total_loss += loss.item() * batch_size
         total_species_loss += species_loss.item() * batch_size
         total_domain_loss += domain_loss.item() * batch_size
+        total_supcon_loss += sc_loss_val * batch_size
         total_species_correct += (species_preds == species_labels).sum().item()
         total_domain_correct += (domain_preds == domain_labels).sum().item()
         total_items += batch_size
@@ -199,6 +228,7 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch: int = 1, total_
         "loss": total_loss / max(total_items, 1),
         "species_loss": total_species_loss / max(total_items, 1),
         "domain_loss": total_domain_loss / max(total_items, 1),
+        "supcon_loss": total_supcon_loss / max(total_items, 1),
         "species_accuracy": total_species_correct / max(total_items, 1),
         "domain_accuracy": total_domain_correct / max(total_items, 1),
     }

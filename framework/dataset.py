@@ -129,10 +129,10 @@ class MosquitoFeatureDataset(Dataset):
         feature = self._normalize(feature)
         if self.cmn:
             feature = self._cmn(feature)
-        if self.use_delta:
-            feature = self._compute_delta(feature)
         if self.training and self.d5_noise_std > 0.0 and sample["domain_label"] == 4:
             feature = self._d5_noise(feature)
+        if self.use_delta:
+            feature = self._compute_delta(feature)
         if self.spec_augment:
             feature = self._spec_augment(feature)
         return {
