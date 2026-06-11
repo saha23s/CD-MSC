@@ -61,6 +61,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_cmn"
     if config.get("d5_noise_std", 0.0) > 0.0:
         name += f"_noise{config['d5_noise_std']}"
+    if config.get("use_delta", False):
+        name += "_delta"
     return name
 
 
@@ -91,6 +93,8 @@ def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: P
 
 def train_experiment(config: dict, overwrite: bool = False) -> dict:
     config = deepcopy(config)
+    if config.get("use_delta", False):
+        config["model_n_mels"] = config["n_mels"] * 2
     config["experiment_name"] = experiment_name_for_seed(config["seed"], config)
     set_seed(config["seed"])
     device = choose_device(config["device"])
@@ -183,6 +187,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             spec_augment_freq_mask=config.get("spec_augment_freq_mask", 10),
             cmn=config.get("cmn", False),
             d5_noise_std=config.get("d5_noise_std", 0.0),
+            use_delta=config.get("use_delta", False),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -193,6 +198,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             expected_feature_signature=expected_validation_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
             cmn=config.get("cmn", False),
+            use_delta=config.get("use_delta", False),
         )
         print(f"loading from {split_feature_path(config, 'training')}")
         print(f"loading from {split_feature_path(config, 'validation')}")

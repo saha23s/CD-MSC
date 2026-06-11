@@ -60,6 +60,7 @@ class MosquitoFeatureDataset(Dataset):
         spec_augment_freq_mask: int = 10,
         cmn: bool = False,
         d5_noise_std: float = 0.0,
+        use_delta: bool = False,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -72,6 +73,7 @@ class MosquitoFeatureDataset(Dataset):
         self.spec_augment_freq_mask = spec_augment_freq_mask
         self.cmn = cmn
         self.d5_noise_std = d5_noise_std
+        self.use_delta = use_delta
         self.feature_mean = None
         self.feature_std = None
         if self.normalize_features:
@@ -113,6 +115,13 @@ class MosquitoFeatureDataset(Dataset):
         # Add Gaussian noise to D5 (lab) clips during training to simulate field SNR
         return feature + np.random.normal(0.0, self.d5_noise_std, feature.shape).astype(np.float32)
 
+    def _compute_delta(self, feature: np.ndarray) -> np.ndarray:
+        # Compute first-order time-axis delta and concatenate with mel along frequency axis.
+        # Delta is computed on already-normalised mel so global mean cancels in the difference.
+        # Result: [T, 2*F] where first F cols are mel, next F cols are temporal differences.
+        delta = np.diff(feature, axis=0, prepend=feature[:1]).astype(np.float32)
+        return np.concatenate([feature, delta], axis=1)
+
     def __getitem__(self, index: int) -> Dict:
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)
@@ -120,6 +129,8 @@ class MosquitoFeatureDataset(Dataset):
         feature = self._normalize(feature)
         if self.cmn:
             feature = self._cmn(feature)
+        if self.use_delta:
+            feature = self._compute_delta(feature)
         if self.training and self.d5_noise_std > 0.0 and sample["domain_label"] == 4:
             feature = self._d5_noise(feature)
         if self.spec_augment:
