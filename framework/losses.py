@@ -28,6 +28,13 @@ representation layer (MTRCNN: 32-dim; AST: embed_dim-dim CLS token).
 import torch
 import torch.nn.functional as F
 
+# Genus index for each species (0=Aedes, 1=Culex, 2=Anopheles).
+# Indices match SPECIES_NAMES order in framework/metadata.py.
+#   0 Ae.aegypti, 1 Ae.albopictus → Aedes (0)
+#   2 Cx.quinquefasciatus, 6 Cx.pipiens → Culex (1)
+#   3 An.gambiae, 4 An.arabiensis, 5 An.dirus, 7 An.minimus, 8 An.stephensi → Anopheles (2)
+_SPECIES_TO_GENUS = torch.tensor([0, 0, 1, 2, 2, 2, 1, 2, 2], dtype=torch.long)
+
 
 def species_cohesion_contrastive_loss(
     embeddings: torch.Tensor,
@@ -205,3 +212,63 @@ def species_conditional_mmd_loss(
     if not mmd_terms:
         return embeddings.new_tensor(0.0)
     return torch.stack(mmd_terms).mean()
+
+
+def genus_hard_negative_contrastive_loss(
+    embeddings: torch.Tensor,
+    species_labels: torch.Tensor,
+    tau: float = 0.05,
+    genus_neg_scale: float = 5.0,
+) -> torch.Tensor:
+    """Genus-aware contrastive loss.
+
+    Addresses Anopheles genus collapse: An.gambiae, An.arabiensis, and An.dirus
+    only appear in one training domain each (D5/D4), so DicL produces no
+    cross-domain positive pairs for them. This loss enforces within-batch
+    intra-genus separation without requiring cross-domain pairs.
+
+    Positive pairs: same species (any domain) — same as ScoL.
+    Hard negatives: same genus, different species — their similarity score
+    is boosted in the denominator by ``genus_neg_scale`` (log-space additive)
+    so the model is explicitly penalised for collapsing intra-genus distinctions.
+
+    Args:
+        embeddings:      [B, D] model embeddings (normalised internally).
+        species_labels:  [B]    integer species indices (0–8).
+        tau:             Temperature. Default 0.05 (tighter than ScoL 0.01 to
+                         avoid over-confident gradients with hard negatives).
+        genus_neg_scale: Multiplier on same-genus different-species similarity
+                         in the denominator (log-space: adds log(scale)).
+                         Higher = stronger push away from genus confusers.
+
+    Returns:
+        Scalar loss. 0 if no same-species pairs in batch.
+    """
+    z = F.normalize(embeddings, dim=-1)          # [B, D]
+    sim = (z @ z.T) / tau                        # [B, B]
+
+    B = z.size(0)
+    eye = torch.eye(B, dtype=torch.bool, device=z.device)
+
+    same_sp = species_labels.unsqueeze(0) == species_labels.unsqueeze(1)   # [B, B]
+    pos_mask = same_sp & ~eye
+
+    has_pos = pos_mask.any(dim=1)
+    if not has_pos.any():
+        return embeddings.new_tensor(0.0)
+
+    # Genus labels derived from species labels
+    genus = _SPECIES_TO_GENUS.to(device=z.device)[species_labels]          # [B]
+    same_genus = genus.unsqueeze(0) == genus.unsqueeze(1)                   # [B, B]
+    hard_neg_mask = same_genus & ~same_sp & ~eye                            # [B, B]
+
+    # Boost same-genus different-species scores in denominator
+    log_scale = torch.log(torch.tensor(genus_neg_scale, device=z.device))
+    sim_boosted = sim + hard_neg_mask.float() * log_scale                   # [B, B]
+
+    log_denom = torch.logsumexp(sim_boosted.masked_fill(eye, float("-inf")), dim=1)  # [B]
+
+    n_pos = pos_mask.sum(dim=1).clamp(min=1).float()
+    loss_per_anchor = -(sim * pos_mask).sum(dim=1) / n_pos + log_denom     # [B]
+
+    return loss_per_anchor[has_pos].mean()

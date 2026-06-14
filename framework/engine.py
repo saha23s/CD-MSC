@@ -11,7 +11,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from framework.losses import domain_invariant_contrastive_loss, species_cohesion_contrastive_loss, species_conditional_mmd_loss
+from framework.losses import (domain_invariant_contrastive_loss, genus_hard_negative_contrastive_loss,
+                              species_cohesion_contrastive_loss, species_conditional_mmd_loss)
 
 
 def balanced_accuracy(preds: torch.Tensor, labels: torch.Tensor, num_classes: int) -> float:
@@ -167,6 +168,8 @@ def train_one_epoch(
     dicl_tau: float = 0.07,
     sdal_weight: float = 0.0,
     sdal_sigma: float = 1.0,
+    genus_cl_weight: float = 0.0,
+    genus_neg_scale: float = 5.0,
     species_loss_weight: "torch.Tensor | None" = None,
 ) -> dict:
     """Train for one epoch.
@@ -224,7 +227,7 @@ def train_one_epoch(
 
         # Contrastive / alignment losses operate on raw (non-mixed) labels.
         # Skip when mixup is active — mixed labels break contrastive pairing.
-        if (scol_weight > 0 or dicl_weight > 0 or sdal_weight > 0) and mixup_fn is None:
+        if (scol_weight > 0 or dicl_weight > 0 or sdal_weight > 0 or genus_cl_weight > 0) and mixup_fn is None:
             emb = outputs.get("proj_embedding", outputs.get("embedding"))
             if emb is not None:
                 if scol_weight > 0:
@@ -238,6 +241,10 @@ def train_one_epoch(
                 if sdal_weight > 0:
                     loss = loss + sdal_weight * species_conditional_mmd_loss(
                         emb, species_labels, domain_labels, sigma=sdal_sigma
+                    )
+                if genus_cl_weight > 0:
+                    loss = loss + genus_cl_weight * genus_hard_negative_contrastive_loss(
+                        emb, species_labels, genus_neg_scale=genus_neg_scale
                     )
 
         loss.backward()
