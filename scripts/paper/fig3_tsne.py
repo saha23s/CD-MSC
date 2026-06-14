@@ -1,25 +1,28 @@
-"""Fig 3 — Side-by-side t-SNE: baseline vs. best system (LODO D1 fold).
+"""Fig 3 — t-SNE diagnostics: baseline vs. best system (LODO D1 fold).
 
-Extracts 32-dim embeddings from both checkpoints on the D1 test set
-(the held-out domain in fold D1), then plots domain-coloured t-SNE.
+Extracts 32-dim embeddings from both checkpoints on the D1 test set (the
+held-out domain in fold D1) and renders three views:
 
-REQUIRES: GPU compute node and LODO D1 checkpoints for both systems.
+  fig3_tsne          — coloured by DOMAIN (domain-collapse story)
+  fig3_tsne_species  — coloured by SPECIES (which species cluster / smear)
+  fig3_tsne_gambiae  — An. gambiae only: seen domains vs held-out D1
+                       (visualises the per-species transfer failure)
+
+REQUIRES: a compute node and LODO D1 checkpoints for both systems.
 
 Usage (on compute node, from repo root, .venv active):
     python scripts/paper/fig3_tsne.py \
-        --baseline outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5/model/model_best.pth \
-        --best     outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5_balanced_dann_dicl_proj128_tau02/model/model_best.pth \
-        --config   configs/lodo_balanced_dann_dicl_proj128_tau02.json \
+        --baseline data/Development_data/outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5/model/model_best.pth \
+        --best     data/Development_data/outputs/LODO_D1_seed42_B64_E100_earlystop_min10_pati5_balanced_dann_dicl_proj128_tau02/model/model_best.pth \
+        --config   configs/lodo_baseline.json \
+        --best-config configs/lodo_balanced_dann_dicl_proj128_tau02.json \
         --fold     D1
 
-NOTE: The --config flag should point to the best-system config so that
-      resolve_config correctly loads hyperparams. The feature pickle
-      path is derived from the config; ensure D1 fold features exist.
+NOTE: the feature pickle path is derived from each config; ensure D1 fold
+      features exist.
 """
 
 import argparse
-import json
-import pickle
 import sys
 from pathlib import Path
 
@@ -41,6 +44,8 @@ from framework.utilization import (
     split_feature_path, training_stats_path,
 )
 
+GAMBIAE = SPECIES_NAMES.index("Anopheles gambiae")  # = 3
+
 OUT = ROOT / "paper" / "figures"
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -54,7 +59,8 @@ plt.rcParams.update({
     "legend.fontsize": 8,
     "figure.dpi":     150,
 })
-CB = sns.color_palette("colorblind", 5)
+CB_DOM = sns.color_palette("colorblind", 5)
+CB_SP  = sns.color_palette("husl", len(SPECIES_NAMES))
 
 
 def extract_embeddings(model, dataloader, device):
@@ -83,57 +89,100 @@ def extract_embeddings(model, dataloader, device):
     )
 
 
-def compute_tsne(embeddings, subsample=4000, seed=42):
+def select_subsample(n, species, subsample, seed):
+    """Pick <=subsample indices, always keeping every gambiae point so the
+    rare malaria-vector class survives subsampling for the overlay panel."""
     rng = np.random.default_rng(seed)
-    if len(embeddings) > subsample:
-        idx = rng.choice(len(embeddings), subsample, replace=False)
-        return TSNE(n_components=2, perplexity=40,
-                    random_state=seed, n_jobs=4).fit_transform(embeddings[idx]), idx
-    coords = TSNE(n_components=2, perplexity=40,
-                  random_state=seed, n_jobs=4).fit_transform(embeddings)
-    return coords, np.arange(len(embeddings))
+    if n <= subsample:
+        return np.arange(n)
+    forced = np.flatnonzero(species == GAMBIAE)
+    rest = np.flatnonzero(species != GAMBIAE)
+    n_fill = max(0, subsample - len(forced))
+    fill = rng.choice(rest, min(n_fill, len(rest)), replace=False)
+    idx = np.concatenate([forced, fill])
+    rng.shuffle(idx)
+    return idx
 
 
-def plot_panel(ax, coords, labels, title):
+def compute_tsne(embeddings, seed=42):
+    return TSNE(n_components=2, perplexity=40,
+                random_state=seed, n_jobs=4).fit_transform(embeddings)
+
+
+def plot_domain_panel(ax, coords, doms, title):
     for i, name in enumerate(DOMAIN_NAMES):
-        mask = labels == i
-        if mask.sum() == 0:
+        m = doms == i
+        if m.sum() == 0:
             continue
-        ax.scatter(coords[mask, 0], coords[mask, 1],
-                   c=[CB[i]], label=name, s=5, alpha=0.55, linewidths=0)
+        ax.scatter(coords[m, 0], coords[m, 1], c=[CB_DOM[i]], label=name,
+                   s=5, alpha=0.55, linewidths=0)
     ax.set_title(title)
     ax.set_xticks([]); ax.set_yticks([])
     sns.despine(ax=ax, left=True, bottom=True)
 
 
+def plot_species_panel(ax, coords, species, title):
+    for i, name in enumerate(SPECIES_NAMES):
+        m = species == i
+        if m.sum() == 0:
+            continue
+        ax.scatter(coords[m, 0], coords[m, 1], c=[CB_SP[i]], label=name,
+                   s=5, alpha=0.55, linewidths=0)
+    ax.set_title(title)
+    ax.set_xticks([]); ax.set_yticks([])
+    sns.despine(ax=ax, left=True, bottom=True)
+
+
+def plot_gambiae_panel(ax, coords, doms, species, held_idx, title):
+    """Grey = everything else; blue = gambiae in SEEN domains;
+    red = gambiae in the HELD-OUT domain (the unseen test we fail on)."""
+    other = species != GAMBIAE
+    g_seen = (species == GAMBIAE) & (doms != held_idx)
+    g_unseen = (species == GAMBIAE) & (doms == held_idx)
+    ax.scatter(coords[other, 0], coords[other, 1], c="0.82", s=4,
+               alpha=0.5, linewidths=0)
+    ax.scatter(coords[g_seen, 0], coords[g_seen, 1], c="#2166AC",
+               s=18, alpha=0.85, linewidths=0,
+               label=f"gambiae seen (n={g_seen.sum()})")
+    ax.scatter(coords[g_unseen, 0], coords[g_unseen, 1], c="#B2182B",
+               s=18, alpha=0.85, linewidths=0,
+               label=f"gambiae held-out (n={g_unseen.sum()})")
+    ax.set_title(title)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.legend(loc="lower right", framealpha=0.85, borderpad=0.4)
+    sns.despine(ax=ax, left=True, bottom=True)
+
+
+def save(fig, stem):
+    for ext, kw in [("pdf", {}), ("png", {"dpi": 150}), ("svg", {})]:
+        fig.savefig(OUT / f"{stem}.{ext}", bbox_inches="tight", **kw)
+    print(f"Saved {OUT}/{stem}.{{pdf,png,svg}}")
+    plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baseline", required=True,
-                    help="Baseline LODO D1 checkpoint (.pth)")
-    ap.add_argument("--best",     required=True,
-                    help="Best-system LODO D1 checkpoint (.pth)")
-    ap.add_argument("--config",   default="configs/lodo_baseline.json",
-                    help="Config for baseline (used for feature paths)")
+    ap.add_argument("--baseline", required=True)
+    ap.add_argument("--best",     required=True)
+    ap.add_argument("--config",   default="configs/lodo_baseline.json")
     ap.add_argument("--best-config",
-                    default="configs/lodo_balanced_dann_dicl_proj128_tau02.json",
-                    help="Config for best system")
-    ap.add_argument("--fold",     default="D1",
-                    help="Which LODO fold test set to use")
+                    default="configs/lodo_balanced_dann_dicl_proj128_tau02.json")
+    ap.add_argument("--fold",     default="D1")
     ap.add_argument("--subsample", type=int, default=4000)
     args = ap.parse_args()
 
     device = choose_device("auto")
+    held_idx = DOMAIN_NAMES.index(args.fold)
 
-    fig, axes = plt.subplots(1, 2, figsize=(6.5, 2.8),
-                             gridspec_kw={"wspace": 0.1})
+    systems = [
+        (args.baseline, args.config,      "Baseline"),
+        (args.best,     args.best_config, "Proposed system"),
+    ]
 
-    for ckpt_path, cfg_path, title, ax in [
-        (args.baseline, args.config,      "Baseline", axes[0]),
-        (args.best,     args.best_config, "Proposed system", axes[1]),
-    ]:
-        config   = load_config(cfg_path)
-        # Override: load the held-out fold test features
-        feat_key = f"lodo_{args.fold.lower()}_test"
+    # Extract + embed each system once; reuse for all three views.
+    results = []  # (title, coords, doms, species)
+    for ckpt_path, cfg_path, title in systems:
+        config = load_config(cfg_path)
         feat_path = split_feature_path(config, "test")
         stats_path = training_stats_path(config)
 
@@ -148,29 +197,53 @@ def main():
                              device, pad_collate_fn)
 
         model = build_model(config, device)
-        ckpt  = torch.load(ckpt_path, map_location=device, weights_only=False)
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
 
         print(f"Extracting embeddings: {title}")
-        embs, doms, _ = extract_embeddings(model, loader, device)
-        coords, idx   = compute_tsne(embs, args.subsample)
-        plot_panel(ax, coords, doms[idx], title)
+        embs, doms, species = extract_embeddings(model, loader, device)
+        idx = select_subsample(len(embs), species, args.subsample, seed=42)
+        coords = compute_tsne(embs[idx])
+        results.append((title, coords, doms[idx], species[idx]))
 
-    # Shared legend
-    handles = [mpatches.Patch(color=CB[i], label=d)
+    # ── View 1: domain-coloured ────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(6.5, 2.8),
+                             gridspec_kw={"wspace": 0.1})
+    for ax, (title, coords, doms, _sp) in zip(axes, results):
+        plot_domain_panel(ax, coords, doms, title)
+    handles = [mpatches.Patch(color=CB_DOM[i], label=d)
                for i, d in enumerate(DOMAIN_NAMES)]
     axes[1].legend(handles=handles, loc="lower right",
                    framealpha=0.85, borderpad=0.4)
-
-    fig.suptitle("t-SNE of 32-dim embeddings (LODO D1 test set, coloured by domain)",
+    fig.suptitle(f"t-SNE of 32-dim embeddings (LODO {args.fold} test, by domain)",
                  fontsize=9)
     fig.tight_layout(pad=0.5)
+    save(fig, "fig3_tsne")
 
-    stem = "fig3_tsne"
-    for ext, kw in [("pdf", {}), ("png", {"dpi": 150}), ("svg", {})]:
-        fig.savefig(OUT / f"{stem}.{ext}", bbox_inches="tight", **kw)
-    print(f"Saved to {OUT}/{stem}.{{pdf,png,svg}}")
-    plt.close(fig)
+    # ── View 2: species-coloured ───────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 2.8),
+                             gridspec_kw={"wspace": 0.1})
+    for ax, (title, coords, _d, species) in zip(axes, results):
+        plot_species_panel(ax, coords, species, title)
+    handles = [mpatches.Patch(color=CB_SP[i], label=n)
+               for i, n in enumerate(SPECIES_NAMES)]
+    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(1.0, 0.5),
+               framealpha=0.85, borderpad=0.4)
+    fig.suptitle(f"t-SNE of 32-dim embeddings (LODO {args.fold} test, by species)",
+                 fontsize=9)
+    fig.tight_layout(pad=0.5)
+    save(fig, "fig3_tsne_species")
+
+    # ── View 3: gambiae seen vs held-out ───────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(6.5, 2.8),
+                             gridspec_kw={"wspace": 0.1})
+    for ax, (title, coords, doms, species) in zip(axes, results):
+        plot_gambiae_panel(ax, coords, doms, species, held_idx, title)
+    fig.suptitle(
+        f"An. gambiae embeddings (LODO {args.fold} test): "
+        f"seen domains vs held-out {args.fold}", fontsize=9)
+    fig.tight_layout(pad=0.5)
+    save(fig, "fig3_tsne_gambiae")
 
 
 if __name__ == "__main__":
