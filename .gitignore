@@ -9,5 +9,5 @@ __pycache__/
 logs/
 job_log.md
 .ipynb_checkpoints/
-paper/
+/paper/
 .venv
