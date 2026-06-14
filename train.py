@@ -54,7 +54,10 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     if config.get("cdann", False):
         name += "_cdann"
     if config.get("batch_balance_domain", False):
-        name += "_balanced"
+        if config.get("balance_mode", "domain") == "species_domain":
+            name += "_balanced_sxd"
+        else:
+            name += "_balanced"
     if config.get("spec_augment", False):
         name += "_specaug"
     if config.get("cmn", False):
@@ -209,10 +212,14 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
         if config.get("batch_balance_domain", False):
             domain_labels = torch.tensor([s["domain_label"] for s in train_dataset.samples])
-            species_labels_all = torch.tensor([s["species_label"] for s in train_dataset.samples])
-            pair_keys = species_labels_all * len(DOMAIN_NAMES) + domain_labels
-            pair_counts = torch.bincount(pair_keys, minlength=len(SPECIES_NAMES) * len(DOMAIN_NAMES)).float().clamp(min=1)
-            weights = 1.0 / pair_counts[pair_keys]
+            if config.get("balance_mode", "domain") == "species_domain":
+                species_labels_all = torch.tensor([s["species_label"] for s in train_dataset.samples])
+                pair_keys = species_labels_all * len(DOMAIN_NAMES) + domain_labels
+                pair_counts = torch.bincount(pair_keys, minlength=len(SPECIES_NAMES) * len(DOMAIN_NAMES)).float().clamp(min=1)
+                weights = 1.0 / pair_counts[pair_keys]
+            else:
+                domain_counts = torch.bincount(domain_labels, minlength=len(DOMAIN_NAMES)).float().clamp(min=1)
+                weights = 1.0 / domain_counts[domain_labels]
             sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset), replacement=True)
             train_loader = DataLoader(
                 train_dataset,
