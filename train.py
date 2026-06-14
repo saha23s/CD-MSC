@@ -68,6 +68,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_delta"
     if config.get("supcon_weight", 0.0) > 0.0:
         name += f"_supcon{config['supcon_weight']}"
+    if config.get("freq_shift_bins", 0) > 0:
+        name += f"_freqshift{config['freq_shift_bins']}"
     return name
 
 
@@ -193,6 +195,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             cmn=config.get("cmn", False),
             d5_noise_std=config.get("d5_noise_std", 0.0),
             use_delta=config.get("use_delta", False),
+            freq_shift_bins=config.get("freq_shift_bins", 0),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -285,7 +288,9 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             append_metrics(output_dir / "metrics.csv", row)
             logger.info(row)
 
-            current_score = val_metrics["species_balanced_accuracy"]
+            field_scores = [val_metrics[f"species_ba_{d}"] for d in ["D1", "D2", "D3", "D4"]
+                            if f"species_ba_{d}" in val_metrics]
+            current_score = sum(field_scores) / len(field_scores) if field_scores else 0.0
             if current_score > best_score:
                 best_score = current_score
                 best_epoch = epoch
