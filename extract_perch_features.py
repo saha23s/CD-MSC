@@ -91,42 +91,25 @@ def load_perch_model(model_url: str):
 # Embedding extraction
 # ---------------------------------------------------------------------------
 
-def extract_embeddings(
-    waveform_32k: np.ndarray,
-    model,
-    tf,
-    batch_size: int = 32,
-) -> np.ndarray:
-    """Extract Perch embeddings for a single variable-length 32 kHz clip.
+def _segment_windows(waveform_32k: np.ndarray) -> np.ndarray:
+    """Segment a 32 kHz clip into non-overlapping 5-second windows.
 
-    Segments the clip into non-overlapping 5-second windows (zero-pads the
-    last window when shorter), runs a batched forward pass, and returns the
-    stacked per-window embeddings.
+    Zero-pads the final window when the clip is shorter than a whole number
+    of 5-second windows. Mosquito clips are typically < 5 s, so this usually
+    returns a single padded window.
 
     Args:
         waveform_32k: 1-D float32 waveform at 32 kHz.
-        model:        loaded TF Hub Perch model.
-        tf:           tensorflow module reference.
-        batch_size:   max windows per forward pass (memory control).
 
     Returns:
-        embeddings: float32 array of shape [n_windows, 1280].
+        windows: float32 array of shape [n_windows, 160000].
     """
     n_samples = len(waveform_32k)
     n_windows = max(1, (n_samples + PERCH_WINDOW_SAMPLES - 1) // PERCH_WINDOW_SAMPLES)
     padded_len = n_windows * PERCH_WINDOW_SAMPLES
     if n_samples < padded_len:
         waveform_32k = np.pad(waveform_32k, (0, padded_len - n_samples))
-
-    windows = waveform_32k.reshape(n_windows, PERCH_WINDOW_SAMPLES)  # [n_w, 160000]
-
-    parts: List[np.ndarray] = []
-    for start in range(0, n_windows, batch_size):
-        chunk = tf.constant(windows[start : start + batch_size], dtype=tf.float32)
-        outputs = model(inputs=chunk)
-        parts.append(outputs["output_1"].numpy())   # output_1 = embedding [batch, 1280]
-
-    return np.concatenate(parts, axis=0).astype(np.float32)  # [n_windows, 1280]
+    return waveform_32k.reshape(n_windows, PERCH_WINDOW_SAMPLES)  # [n_windows, 160000]
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +145,7 @@ def extract_split(
     model,
     tf,
     overwrite: bool,
+    limit: Optional[int] = None,
 ) -> Path:
     feature_root = Path(config["feature_root"])
     feature_root.mkdir(parents=True, exist_ok=True)
@@ -180,9 +164,74 @@ def extract_split(
 
     ids_key  = {"training": "train_ids_path", "validation": "val_ids_path", "test": "test_ids_path"}[split_name]
     file_ids = load_id_list(config[ids_key])
+    if limit is not None:
+        file_ids = file_ids[:limit]
+    batch_size = int(config.get("perch_batch_size", 64))
+    checkpoint_every = int(config.get("perch_checkpoint_every", 5000))
+    partial_path = feature_root / f"{split_name.lower()}_features.partial.pkl"
+
+    def save_pickle(path: Path, payload: Dict) -> None:
+        """Atomic pickle write — dump to a temp file then rename, so a crash
+        mid-write can never leave a truncated/corrupt file behind."""
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "wb") as fh:
+            pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(path)
+
+    # ``records`` holds clips whose features are fully assembled and durably
+    # checkpointed. Resume from a matching partial checkpoint if one exists so
+    # a timed-out/killed run picks up where it left off instead of restarting.
     records: List[Dict] = []
+    done_ids: set = set()
+    if partial_path.exists() and not overwrite:
+        try:
+            with open(partial_path, "rb") as fh:
+                part = pickle.load(fh)
+            if part.get("config_signature") == sig:
+                records = part["items"]
+                done_ids = {r["file_id"] for r in records}
+                print(f"[{split_name}] resuming from checkpoint: "
+                      f"{len(records)}/{len(file_ids)} clips already done")
+            else:
+                print(f"[{split_name}] partial checkpoint config mismatch — restarting")
+        except Exception as exc:  # corrupt/unreadable partial → start fresh
+            print(f"[{split_name}] partial checkpoint unreadable ({exc}) — restarting")
+
+    # In-progress clips (windowed but not yet checkpointed). Kept separate from
+    # ``records`` so checkpoint boundaries reset their indexing cleanly.
+    pend_records: List[Dict] = []
+    pend_embeds:  List[List[np.ndarray]] = []   # per-clip list of [1280] rows
+
+    # Streaming window buffer for cross-clip batching: most clips are a single
+    # 5-s window, so batching at clip granularity (the old path) ran Perch at
+    # batch size 1. Here we pool windows across clips and flush full batches.
+    buf_windows: List[np.ndarray] = []          # each [160000]
+    buf_owner:   List[int] = []                  # in-progress clip index per window
+
+    def run_batch(n: int) -> None:
+        """Run Perch on the first ``n`` buffered windows; scatter to owners."""
+        batch = np.stack(buf_windows[:n], axis=0)                       # [n, 160000]
+        outputs = model(inputs=tf.constant(batch, dtype=tf.float32))
+        emb = outputs["output_1"].numpy().astype(np.float32)           # [n, 1280]
+        for i in range(n):
+            pend_embeds[buf_owner[i]].append(emb[i])
+        del buf_windows[:n]
+        del buf_owner[:n]
+
+    def flush_pending() -> None:
+        """Assemble in-progress clips into ``records``. Buffer must be drained
+        first so every pending clip has all its window embeddings."""
+        for rec, rows in zip(pend_records, pend_embeds):
+            feature = np.stack(rows, axis=0)      # [n_windows, 1280]
+            rec["feature"]     = feature
+            rec["feature_dim"] = feature.shape[1]
+            records.append(rec)
+        pend_records.clear()
+        pend_embeds.clear()
 
     for idx, file_id in enumerate(file_ids, 1):
+        if file_id in done_ids:
+            continue                              # already checkpointed on a prior run
         species, domain = parse_file_id(file_id)
         audio_path = Path(config["dataset_root"]) / f"{file_id}.wav"
 
@@ -197,32 +246,55 @@ def extract_split(
             waveform, orig_sr=config["sample_rate"], target_sr=PERCH_SAMPLE_RATE
         ).astype(np.float32)
 
-        embeddings = extract_embeddings(waveform_32k, model, tf)  # [n_windows, 1280]
-
-        print(
-            f"[{split_name}] {idx}/{len(file_ids)} | id={file_id} | "
-            f"n_windows={embeddings.shape[0]}"
-        )
-        records.append({
+        windows = _segment_windows(waveform_32k)   # [n_windows, 160000]
+        clip_idx = len(pend_records)
+        pend_embeds.append([])
+        pend_records.append({
             "file_id":       file_id,
-            "feature":       embeddings,          # [n_windows, 1280]  float32
-            "num_frames":    embeddings.shape[0],
-            "feature_dim":   embeddings.shape[1],
+            "feature":       None,                # filled after batched inference
+            "num_frames":    windows.shape[0],
+            "feature_dim":   PERCH_EMBED_DIM,
             "species":       species,
             "species_label": SPECIES_TO_INDEX[species],
             "domain":        domain,
             "domain_label":  DOMAIN_TO_INDEX[domain],
             "audio_path":    str(audio_path),
         })
+        for w in windows:
+            buf_windows.append(w)
+            buf_owner.append(clip_idx)
 
-    payload = {
+        # Flush whole batches as they accumulate.
+        while len(buf_windows) >= batch_size:
+            run_batch(batch_size)
+
+        # Periodic crash-safe checkpoint: drain the buffer so all pending clips
+        # are complete, assemble them, and durably write the partial pickle.
+        if idx % checkpoint_every == 0:
+            while buf_windows:
+                run_batch(min(batch_size, len(buf_windows)))
+            flush_pending()
+            save_pickle(partial_path, {
+                "split": split_name, "num_items": len(records),
+                "config_signature": sig, "items": records,
+            })
+            print(f"[{split_name}] checkpoint: {len(records)}/{len(file_ids)} clips saved")
+        elif idx % 1000 == 0 or idx == len(file_ids):
+            print(f"[{split_name}] {idx}/{len(file_ids)} clips windowed")
+
+    # Drain any remaining partial batch and assemble the last clips.
+    while buf_windows:
+        run_batch(min(batch_size, len(buf_windows)))
+    flush_pending()
+
+    save_pickle(output_path, {
         "split":            split_name,
         "num_items":        len(records),
         "config_signature": sig,
         "items":            records,
-    }
-    with open(output_path, "wb") as fh:
-        pickle.dump(payload, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    })
+    if partial_path.exists():
+        partial_path.unlink()                     # final file is durable; drop checkpoint
     print(f"[{split_name}] saved {len(records)} items → {output_path}")
     return output_path
 
@@ -235,6 +307,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Extract frozen Perch v2 embeddings.")
     parser.add_argument("--config",    required=True, help="Path to experiment JSON config.")
     parser.add_argument("--overwrite", action="store_true", help="Re-extract even if cached.")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Process only the first N clips per split (smoke testing).")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -244,7 +318,7 @@ def main() -> None:
     model, tf = load_perch_model(config["perch_model_url"])
 
     for split in ("training", "validation", "test"):
-        extract_split(config, split, model, tf, args.overwrite)
+        extract_split(config, split, model, tf, args.overwrite, limit=args.limit)
 
     print("Done.")
 
