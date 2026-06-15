@@ -77,6 +77,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_histmatch"
     if config.get("use_attention_pool", False):
         name += "_attnpool"
+    if config.get("use_fda", False):
+        name += f"_fda{config.get('fda_beta', 0.05)}"
     return name
 
 
@@ -212,6 +214,9 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             use_approx_hpss=config.get("use_approx_hpss", False),
             hist_match=config.get("hist_match", False),
             domain_stats=domain_stats,
+            use_fda=config.get("use_fda", False),
+            fda_beta=config.get("fda_beta", 0.05),
+            fda_prob=config.get("fda_prob", 0.5),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -305,9 +310,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             append_metrics(output_dir / "metrics.csv", row)
             logger.info(row)
 
-            field_scores = [val_metrics[f"species_ba_{d}"] for d in ["D1", "D2", "D3", "D4"]
-                            if f"species_ba_{d}" in val_metrics]
-            current_score = sum(field_scores) / len(field_scores) if field_scores else 0.0
+            current_score = val_metrics.get("species_balanced_accuracy", 0.0)
             if current_score > best_score:
                 best_score = current_score
                 best_epoch = epoch
@@ -319,7 +322,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                         "config": config,
                         "epoch": epoch,
                         "val_metrics": best_val_metrics,
-                        "selection_metric": "mean_field_domain_BA",
+                        "selection_metric": "val_species_balanced_accuracy",
                     },
                     best_checkpoint_path,
                 )
@@ -329,7 +332,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
             if epoch >= early_stopping_min_epoch and epochs_without_improvement >= early_stopping_patience:
                 logger.info(
-                    "Early stopping at epoch %s. Best epoch: %s, best mean field-domain BA (D1-D4 val): %.6f, min_epoch: %s, patience: %s",
+                    "Early stopping at epoch %s. Best epoch: %s, best val species_balanced_accuracy: %.6f, min_epoch: %s, patience: %s",
                     epoch,
                     best_epoch,
                     best_score,

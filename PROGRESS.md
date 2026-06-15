@@ -99,7 +99,7 @@ Seed 42 single run: BAseen=0.883, BAunseen=0.168, DSG=0.716
 | SupCon-C | Exp 4 + SupCon 0.5 + freqshift±3 | ~0.72 | 0.2303 | 0.4869 | ❌ Confounded; freqshift collapsed BAseen |
 | HM-1 | Exp 4 + approx HPSS + hist_match | — | — | — | ❌ Collapsed; domain stats bug (wrong source distribution) |
 | HM-2 | Exp 4 + hist_match only | 0.3030 | 0.2495 | 0.0534 | ❌ BAseen collapsed; D5 train/test distribution mismatch |
-| **AttnPool** | **Exp 4 + learned frame attention** | — | — | — | **🔄 RUNNING NOW** |
+| AttnPool | Exp 4 + learned frame attention pool | 0.7085 | 0.2148 | 0.4936 | ❌ Worse than Exp 4; max pooling was useful; spurious early stop at ep20 |
 
 BAseen for SupCon-B/C derived from DSG (BAseen = BAunseen + DSG); BAseen for SupCon-A not recorded.
 
@@ -137,6 +137,14 @@ features as source and raw stats as reference — wrong distribution. Val loss r
 at test time D5 clips arrive untransformed — the model trains on fake-field D5 but is tested
 on real-lab D5. BAseen collapsed to 0.303. DSG was low (0.053) only because both seen and
 unseen performance were equally poor.
+
+**AttnPool (frame attention pooling):** Replaces `masked_mean_max` (mean+max concatenation,
+128-dim per branch) with learned soft-weighted average (64-dim per branch). Two failures:
+(a) the max-pooled component captures the single highest-energy wingbeat frame and is
+discriminative; soft averaging over all frames dilutes this. (b) The D1–D4 field BA early
+stopping criterion spuriously saved a checkpoint at epoch 20 (D4's 3 val clips all got lucky),
+approximately 9 epochs before the val species BA peak. These issues are separable — attention
+pooling itself might not be dead, but it needs a fair comparison without the spurious stopping.
 
 **AST (collaborator saha23s, LODO branch):** Pretrained on AudioSet which contains no
 mosquito wingbeats — the pretrained representations have no spectral resolution for 20-80 Hz
@@ -184,45 +192,86 @@ Training notebook: `colab_dann.ipynb` — all flags exposed as Python variables 
 The val set is ~12.5% of trainval, which is itself ~99.4% D5. So D1–D4 validation clips
 number only ~180 total across 4 domains × 9 species — roughly 5 clips per bucket. The
 mean D1–D4 field BA used for early stopping is extremely noisy at this scale; a single
-lucky epoch can spike to ~0.99 (observed in HM-2, caused premature stopping at ep30).
-**When watching a run**, be suspicious if early stopping fires before epoch 40.
+lucky epoch can spike to ~0.99 (observed in HM-2 ep30 and AttnPool ep20 where checkpoint
+was saved ~9 epochs before val species BA peak). **Reverted to `val_species_balanced_accuracy`
+for all future experiments.** The field-domain BA criterion is correct in principle but
+requires far more D4 val clips to be reliable.
 
 ---
 
-## Current Experiment: Frame Attention Pooling (AttnPool)
+## AttnPool Result and Analysis (2026-06-15)
 
-**What it changes:** Replaces `masked_mean_max` in each of the three MTRCNN branches
-with a learned `FrameAttentionPool` module. Scores each valid time frame by passing its
-channel-mean vector through Linear(64→1), then softmax-weights the frames before summing.
+**Result:** BAseen=0.7085, BAunseen=0.2148, DSG=0.4936 (best model, seed42)
+Final model (ep30): BAseen=0.7389, BAunseen=0.2061, DSG=0.5328
 
-**Rationale:** Mean+max pooling treats all valid frames equally. A field recording of
-An. dirus in D4 has the wingbeat present for only a fraction of the clip; the rest is
-D4-specific background noise. If the model learns to upweight clean wingbeat frames —
-which it has seen in D5 lab recordings — the D5 representation may transfer to field
-conditions more cleanly, directly helping the three bottleneck species.
+**Verdict:** Worse than Exp 4 (BAunseen 0.2148 vs 0.2626). Two issues:
 
-**Config:** Identical to Exp 4 except `use_attention_pool=True`. Only 195 new parameters
-(3 branches × Linear(64→1)+bias). Output dir: `MTRCNN_seed42_B64_E100_earlystop_min20_pati10_dann0.3_cdann_balanced_attnpool/`
+1. **Max pooling was doing real work.** `masked_mean_max` concatenates mean+max into 128-dim
+   per branch; the max component captures the single most discriminative frame (peak wingbeat
+   energy). Replacing it with a soft-weighted average loses the max signal. The learned
+   attention gate doesn't automatically recover max behaviour — it tends toward a smoother
+   weighted mean.
 
-**Interpreting the result:**
-- BAunseen > 0.2626: noise dilution in pooling was a real problem; attention helps
-- BAunseen ≈ Exp 4: pooling is not the bottleneck; move to feature-level augmentation
-- BAunseen < 0.2626: mean+max was doing something useful; investigate why
+2. **Spurious early stopping at epoch 20.** The mean D1–D4 field BA spiked to 0.979861
+   at epoch 20 (caused by 3 D4 val clips → one good batch = D4 BA = 1.0). Checkpoint saved
+   at epoch 20. But val species BA was still rising: ep20=0.783, ep23=0.799, ep26=0.804,
+   ep29=0.809. We saved a checkpoint ~9 epochs before the actual peak.
+
+**Action: revert early stopping criterion to `val_species_balanced_accuracy`** (the original
+baseline criterion). The field-domain BA criterion is correct in principle but unusable with
+3 D4 val clips. Reverting to val species BA also aligns the checkpoint with what the final
+submission optimises (BAunseen averaged across species). See also: Known Limitation section.
 
 ---
 
-## Next Steps (priority order after AttnPool result)
+## Next Experiment: FDA (Fourier Domain Adaptation)
 
-1. **If AttnPool wins:** Run 2–3 more seeds to confirm, then combine with FDA
-2. **If AttnPool ties/loses:** Try FDA (Fourier Domain Adaptation) — directly synthesises
-   field-domain versions of D5 clips by swapping low-frequency STFT amplitude with D1–D4
-   clips at training time. Requires raw audio on Drive (confirmed available as zip).
-   Most principled augmentation for the bottleneck species problem.
-3. **Per-clip CMVN:** Extend CMN (mean-only) to full mean+variance normalisation per clip.
-   Removes both DC offset and gain differences from features without domain labels.
-   One-line change; worth a quick ablation against Exp 4.
-4. **PCEN:** Replace log-mel with Per-Channel Energy Normalisation. Adapts to local noise
-   floor, making features more robust to variable field SNR. Requires re-extraction.
+**What it does:** At training time, for each D5 clip, randomly select a D1–D4 clip and swap
+the low-frequency 2D Fourier amplitude components of the log-mel spectrogram. The modified
+clip retains its original species label. This creates synthetic "field-condition" versions of
+D5 clips, giving the bottleneck species (An. dirus, An. minimus, An. stephensi) fake cross-
+domain training examples without needing real field recordings of them.
+
+**Why this is better than prior augmentation attempts:**
+- **HM (histogram match)** operated on the marginal amplitude distribution — too blunt, caused
+  train/test mismatch at test time. FDA operates on frequency *structure*, not amplitude levels.
+- **SpecAugment** masked random regions — irrelevant to domain transfer.
+- **D5 noise** added Gaussian noise — doesn't mimic field domain coloration structure.
+- FDA targets exactly what differs between D5 (lab, quiet, flat response) and D1–D4 (field,
+  ambient noise, non-flat recording equipment): the coarse spectral envelope and slow temporal
+  variations, which are the low-spatial-frequency components of the 2D spectrogram.
+
+**Key parameter — β:** controls the fraction of the 2D Fourier spectrum to swap.
+- Small β (0.01–0.05): swap only DC and very coarse patterns → safe, targets room acoustics
+- Large β (>0.1): begins to swap species-discriminative structure → risky
+
+**Safety concern:** making domains sound "too similar." FDA with small β is safe because:
+species identity (wingbeat oscillations ~400–800 Hz, rapid temporal pattern) lives in HIGH
+spatial-frequency 2D Fourier components. Domain identity (room acoustics, equipment coloration)
+lives in LOW spatial-frequency components. With β≤0.05 we only touch the latter.
+
+**Config plan:** Exp 4 base (C-DANN α=0.3, balanced, no AttnPool) + `use_fda=True`, `fda_beta=0.05`,
+`fda_prob=0.5` (applied with 50% probability per D5 clip). Revert early stopping to val species BA.
+
+**Implementation:** New flag `use_fda` in `dataset.py` MosquitoFeatureDataset, similar to
+`use_approx_hpss`. Requires access to D1–D4 clips at training time (already in training pkl).
+No feature re-extraction needed — FDA applied on-the-fly in `__getitem__`. Runtime overhead is
+negligible (2D FFT on [T, 64] is ~0.1ms).
+
+**Estimated runtime:** Similar to Exp 4 — ~40–70 minutes in Colab, 25–35 epochs.
+
+---
+
+## Next Steps (priority order)
+
+1. **FDA (immediate):** Implement `use_fda` flag in `framework/dataset.py` + expose in cell 6.
+   Run seed 42 with Exp 4 base + FDA + reverted early stopping.
+2. **Per-clip CMVN:** If FDA helps, combine with full mean+variance normalisation per clip
+   (extends current CMN). One-line change; removes gain differences that FDA doesn't address.
+3. **PCEN:** Replace log-mel with Per-Channel Energy Normalisation. Requires feature re-extraction.
+   Deprioritised due to infra overhead.
+4. **Multi-seed FDA:** Once a winning FDA config is found, run full 10-seed sweep for final
+   submission numbers.
 
 ---
 
@@ -290,7 +339,7 @@ than regular DANN. With balanced batches (Exp 4), the combination was best so fa
 | `train_domain_accuracy` | **Want this to FALL** toward ~0.2 (chance) — means DANN is working |
 | `val_species_balanced_accuracy` | Logged each epoch; should hold steady or rise |
 | `val_domain_balanced_accuracy` | Lower is better for DANN |
-| Early stopping criterion | Mean D1–D4 field BA in val set (very noisy — see Known Limitation above) |
+| Early stopping criterion | **Reverted to `val_species_balanced_accuracy`** (field-domain BA criterion retired — too noisy with 3 D4 val clips) |
 
 **Warning signs:**
 - Both species and domain accuracy fall to random chance (1/9=0.11, 1/5=0.20) simultaneously → full collapse, cancel the run

@@ -66,6 +66,9 @@ class MosquitoFeatureDataset(Dataset):
         use_approx_hpss: bool = False,
         hist_match: bool = False,
         domain_stats: Optional[Dict] = None,
+        use_fda: bool = False,
+        fda_beta: float = 0.05,
+        fda_prob: float = 0.5,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -83,6 +86,14 @@ class MosquitoFeatureDataset(Dataset):
         self.use_approx_hpss = use_approx_hpss
         self.hist_match = hist_match and training
         self.domain_stats = domain_stats
+        self.use_fda = use_fda and training
+        self.fda_beta = fda_beta
+        self.fda_prob = fda_prob
+        # Pre-index field (D1–D4) samples for fast random access during FDA augmentation.
+        # domain_label==4 is D5 (lab); 0–3 are field domains.
+        self.field_indices: List[int] = []
+        if self.use_fda:
+            self.field_indices = [i for i, s in enumerate(self.samples) if s["domain_label"] != 4]
         self.feature_mean = None
         self.feature_std = None
         if self.normalize_features:
@@ -135,6 +146,42 @@ class MosquitoFeatureDataset(Dataset):
         H2, P2 = H ** 2, P ** 2
         return feature * H2 / (H2 + P2 + 1e-6)
 
+    def _fda_augment(self, source: np.ndarray, target: np.ndarray) -> np.ndarray:
+        # Fourier Domain Adaptation: swap the low-frequency 2D amplitude components of a
+        # D5 (lab) clip with those of a field (D1–D4) clip from any species.
+        # The source species label is preserved — only the coarse acoustic envelope changes.
+        # beta controls the fraction of each frequency axis that is swapped; small values
+        # (~0.05) target only room acoustics / spectral coloration, leaving the high-frequency
+        # wingbeat oscillations intact.
+        T, F = source.shape
+
+        # Align target length to source by random crop or edge-pad.
+        Tt = target.shape[0]
+        if Tt >= T:
+            start = random.randint(0, Tt - T)
+            target = target[start : start + T]
+        else:
+            target = np.pad(target, ((0, T - Tt), (0, 0)), mode="edge")
+
+        fft_s = np.fft.fft2(source)
+        fft_t = np.fft.fft2(target)
+
+        amp_s = np.fft.fftshift(np.abs(fft_s))
+        amp_t = np.fft.fftshift(np.abs(fft_t))
+        phase_s = np.angle(fft_s)
+
+        # Swap a central (low-frequency) window in the shifted amplitude spectrum.
+        h_cut = max(1, int(np.ceil(T * self.fda_beta)))
+        w_cut = max(1, int(np.ceil(F * self.fda_beta)))
+        h_ctr, w_ctr = T // 2, F // 2
+        amp_new = amp_s.copy()
+        amp_new[h_ctr - h_cut : h_ctr + h_cut, w_ctr - w_cut : w_ctr + w_cut] = \
+            amp_t[h_ctr - h_cut : h_ctr + h_cut, w_ctr - w_cut : w_ctr + w_cut]
+        amp_new = np.fft.ifftshift(amp_new)
+
+        fft_new = amp_new * np.exp(1j * phase_s)
+        return np.real(np.fft.ifft2(fft_new)).astype(np.float32)
+
     def _domain_hist_match(self, feature: np.ndarray) -> np.ndarray:
         # Shift D5 clip distribution to a randomly chosen field domain (D1–D4)
         target = random.choice(["D1", "D2", "D3", "D4"])
@@ -157,6 +204,10 @@ class MosquitoFeatureDataset(Dataset):
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
+        if self.use_fda and sample["domain_label"] == 4 and self.field_indices and random.random() < self.fda_prob:
+            target_idx = random.choice(self.field_indices)
+            target_feature = self.samples[target_idx]["feature"].astype(np.float32)
+            feature = self._fda_augment(feature, target_feature)
         if self.use_approx_hpss:
             feature = self._approx_hpss(feature)
         if self.hist_match and sample["domain_label"] == 4 and self.domain_stats is not None:
