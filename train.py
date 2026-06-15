@@ -6,6 +6,7 @@ Affiliation: Machine Learning Research Group, University of Oxford
 """
 
 import argparse
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -70,6 +71,10 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += f"_supcon{config['supcon_weight']}"
     if config.get("freq_shift_bins", 0) > 0:
         name += f"_freqshift{config['freq_shift_bins']}"
+    if config.get("use_approx_hpss", False):
+        name += "_hpss"
+    if config.get("hist_match", False):
+        name += "_histmatch"
     return name
 
 
@@ -178,6 +183,12 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         save_json(output_dir / "resolved_config.json", config)
         logger = make_logger(output_dir / "train.log")
 
+        domain_stats = None
+        if config.get("hist_match", False):
+            stats_path = Path(config.get("domain_stats_path", "Development_data/feature/domain_feature_stats.json"))
+            with open(stats_path) as fh:
+                domain_stats = json.load(fh)
+
         expected_training_feature_signature = config_signature(feature_signature_payload(config, "training"))
         expected_validation_feature_signature = config_signature(feature_signature_payload(config, "validation"))
         expected_training_stats_signature = expected_training_feature_signature
@@ -196,6 +207,9 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             d5_noise_std=config.get("d5_noise_std", 0.0),
             use_delta=config.get("use_delta", False),
             freq_shift_bins=config.get("freq_shift_bins", 0),
+            use_approx_hpss=config.get("use_approx_hpss", False),
+            hist_match=config.get("hist_match", False),
+            domain_stats=domain_stats,
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -207,6 +221,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             expected_stats_signature=expected_training_stats_signature,
             cmn=config.get("cmn", False),
             use_delta=config.get("use_delta", False),
+            use_approx_hpss=config.get("use_approx_hpss", False),
         )
         print(f"loading from {split_feature_path(config, 'training')}")
         print(f"loading from {split_feature_path(config, 'validation')}")

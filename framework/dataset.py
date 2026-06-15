@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from scipy.ndimage import median_filter
 from torch.utils.data import Dataset
 
 
@@ -62,6 +63,9 @@ class MosquitoFeatureDataset(Dataset):
         d5_noise_std: float = 0.0,
         use_delta: bool = False,
         freq_shift_bins: int = 0,
+        use_approx_hpss: bool = False,
+        hist_match: bool = False,
+        domain_stats: Optional[Dict] = None,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -76,6 +80,9 @@ class MosquitoFeatureDataset(Dataset):
         self.d5_noise_std = d5_noise_std
         self.use_delta = use_delta
         self.freq_shift_bins = freq_shift_bins
+        self.use_approx_hpss = use_approx_hpss
+        self.hist_match = hist_match and training
+        self.domain_stats = domain_stats
         self.feature_mean = None
         self.feature_std = None
         if self.normalize_features:
@@ -121,6 +128,24 @@ class MosquitoFeatureDataset(Dataset):
         shift = random.randint(-self.freq_shift_bins, self.freq_shift_bins)
         return np.roll(feature, shift, axis=1)
 
+    def _approx_hpss(self, feature: np.ndarray) -> np.ndarray:
+        # Wiener masking on log-mel: harmonic = time-persistent, percussive = freq-spread
+        H = median_filter(feature, size=(17, 1))  # large time kernel → harmonic estimate
+        P = median_filter(feature, size=(1, 9))   # large freq kernel → percussive estimate
+        H2, P2 = H ** 2, P ** 2
+        return feature * H2 / (H2 + P2 + 1e-6)
+
+    def _domain_hist_match(self, feature: np.ndarray) -> np.ndarray:
+        # Shift D5 clip distribution to a randomly chosen field domain (D1–D4)
+        target = random.choice(["D1", "D2", "D3", "D4"])
+        src = self.domain_stats["D5"]
+        tgt = self.domain_stats[target]
+        mean_s = np.array(src["mean"], dtype=np.float32)
+        std_s  = np.array(src["std"],  dtype=np.float32)
+        mean_t = np.array(tgt["mean"], dtype=np.float32)
+        std_t  = np.array(tgt["std"],  dtype=np.float32)
+        return (feature - mean_s) / (std_s + 1e-8) * std_t + mean_t
+
     def _compute_delta(self, feature: np.ndarray) -> np.ndarray:
         # Compute first-order time-axis delta and concatenate with mel along frequency axis.
         # Delta is computed on already-normalised mel so global mean cancels in the difference.
@@ -132,6 +157,10 @@ class MosquitoFeatureDataset(Dataset):
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
+        if self.use_approx_hpss:
+            feature = self._approx_hpss(feature)
+        if self.hist_match and sample["domain_label"] == 4 and self.domain_stats is not None:
+            feature = self._domain_hist_match(feature)
         feature = self._normalize(feature)
         if self.cmn:
             feature = self._cmn(feature)
