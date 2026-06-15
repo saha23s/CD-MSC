@@ -58,6 +58,7 @@ class MTRCNNBranch(nn.Module):
         stage_specs: List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]],
         dropout: float,
         n_mels: int,
+        use_attention_pool: bool = False,
     ) -> None:
         super().__init__()
         channels = [1, 16, 32, 64]
@@ -74,6 +75,7 @@ class MTRCNNBranch(nn.Module):
                 for index, (kernel_size, dilation, padding) in enumerate(stage_specs)
             ]
         )
+        self.attention_pool = FrameAttentionPool(64) if use_attention_pool else None
         self.frequency_projection = nn.Linear(self._infer_frequency_bins(n_mels), 1)
 
     def _infer_frequency_bins(self, n_mels: int) -> int:
@@ -89,7 +91,10 @@ class MTRCNNBranch(nn.Module):
             x = stage(x)
             lengths = stage.output_lengths(lengths)
 
-        pooled = masked_mean_max(x, lengths)
+        if self.attention_pool is not None:
+            pooled = self.attention_pool(x, lengths)
+        else:
+            pooled = masked_mean_max(x, lengths)
         pooled = self.frequency_projection(pooled).squeeze(-1)
         return F.relu(pooled, inplace=True)
 
@@ -105,6 +110,36 @@ def masked_mean_max(x: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
     masked_max = x.masked_fill(~mask, float("-inf")).max(dim=2).values
     masked_max = torch.where(torch.isfinite(masked_max), masked_max, torch.zeros_like(masked_max))
     return masked_mean + masked_max
+
+
+class FrameAttentionPool(nn.Module):
+    """Learned attention pooling over the time dimension.
+
+    Scores each frame by passing its channel-mean vector through a linear layer,
+    then takes a softmax-weighted sum. In field recordings the model learns to
+    upweight frames where the wingbeat is prominent and ignore background noise.
+    Replaces masked_mean_max when use_attention_pool=True.
+    """
+
+    def __init__(self, channels: int) -> None:
+        super().__init__()
+        self.score = nn.Linear(channels, 1)
+
+    def forward(self, x: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+        # x: [B, C, T, F]
+        B, C, T, F = x.shape
+        valid_lengths = lengths.clamp(min=1, max=T)
+        time_idx = torch.arange(T, device=x.device).view(1, -1)
+        valid_mask = time_idx < valid_lengths.view(-1, 1)  # [B, T]
+
+        frame_feat = x.mean(dim=-1).permute(0, 2, 1)  # [B, T, C]
+        scores = self.score(frame_feat)  # [B, T, 1]
+        scores = scores.masked_fill(~valid_mask.unsqueeze(-1), float("-inf"))
+        gate = torch.softmax(scores, dim=1)  # [B, T, 1]
+
+        # gate: [B, 1, T, 1] for broadcasting with x: [B, C, T, F]
+        pooled = (x * gate.permute(0, 2, 1).unsqueeze(-1)).sum(dim=2)  # [B, C, F]
+        return pooled
 
 
 class GRL(torch.autograd.Function):
@@ -146,6 +181,7 @@ class MTRCNNClassifier(nn.Module):
     def __init__(self, config, num_species_classes: int, num_domain_classes: int) -> None:
         super().__init__()
         model_n_mels = config.get("model_n_mels", config["n_mels"])
+        use_attention_pool = config.get("use_attention_pool", False)
         self.input_bn = nn.BatchNorm2d(model_n_mels)
         self.kernel_3_branch = MTRCNNBranch(
             stage_specs=[
@@ -155,6 +191,7 @@ class MTRCNNClassifier(nn.Module):
             ],
             dropout=config["dropout"],
             n_mels=model_n_mels,
+            use_attention_pool=use_attention_pool,
         )
         self.kernel_5_branch = MTRCNNBranch(
             stage_specs=[
@@ -164,6 +201,7 @@ class MTRCNNClassifier(nn.Module):
             ],
             dropout=config["dropout"],
             n_mels=model_n_mels,
+            use_attention_pool=use_attention_pool,
         )
         self.kernel_7_branch = MTRCNNBranch(
             stage_specs=[
@@ -173,6 +211,7 @@ class MTRCNNClassifier(nn.Module):
             ],
             dropout=config["dropout"],
             n_mels=model_n_mels,
+            use_attention_pool=use_attention_pool,
         )
         self.cdann = config.get("cdann", False)
         self.num_species_classes = num_species_classes

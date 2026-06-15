@@ -75,6 +75,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_hpss"
     if config.get("hist_match", False):
         name += "_histmatch"
+    if config.get("use_attention_pool", False):
+        name += "_attnpool"
     return name
 
 
