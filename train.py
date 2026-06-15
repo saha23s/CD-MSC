@@ -79,6 +79,9 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
         name += "_attnpool"
     if config.get("use_fda", False):
         name += f"_fda{config.get('fda_beta', 0.05)}"
+    d1_oversample = config.get("d1_oversample", 1.0)
+    if d1_oversample != 1.0:
+        name += f"_d1x{d1_oversample}"
     return name
 
 
@@ -245,6 +248,12 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             else:
                 domain_counts = torch.bincount(domain_labels, minlength=len(DOMAIN_NAMES)).float().clamp(min=1)
                 weights = 1.0 / domain_counts[domain_labels]
+            d1_oversample = config.get("d1_oversample", 1.0)
+            if d1_oversample != 1.0:
+                # D1 is domain index 0; boost its sampling weight relative to other field domains.
+                weights = weights * torch.where(domain_labels == 0,
+                                                torch.full_like(weights, d1_oversample),
+                                                torch.ones_like(weights))
             sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset), replacement=True)
             train_loader = DataLoader(
                 train_dataset,

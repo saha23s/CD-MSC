@@ -260,16 +260,26 @@ training unless we use the test set (which we must not optimise against).
 
 ---
 
-## Next Steps (priority order)
+## Next Steps (priority order, updated 2026-06-15)
 
-1. **FDA (immediate):** Implement `use_fda` flag in `framework/dataset.py` + expose in cell 6.
-   Run seed 42 with Exp 4 base + FDA + reverted early stopping.
-2. **Per-clip CMVN:** If FDA helps, combine with full mean+variance normalisation per clip
-   (extends current CMN). One-line change; removes gain differences that FDA doesn't address.
-3. **PCEN:** Replace log-mel with Per-Channel Energy Normalisation. Requires feature re-extraction.
-   Deprioritised due to infra overhead.
-4. **Multi-seed FDA:** Once a winning FDA config is found, run full 10-seed sweep for final
-   submission numbers.
+1. **Exp B — D1-heavy batch weighting (immediate, ~50 min):** ✅ Implemented.
+   `d1_oversample=3.0` in `train.py` sampler; exposed as `D1_OVERSAMPLE` in colab_dann.ipynb cell 6.
+   Output dir: `MTRCNN_seed42_B64_E100_earlystop_min20_pati10_dann0.3_cdann_balanced_d1x3.0/`
+
+2. **Exp C — Per-clip CMVN (~50 min):** Set `CMN=True` in notebook.
+   Subtracts per-clip time-axis mean per mel bin — already implemented, just never tried on Exp 4 base alone.
+
+3. **Ablation: balanced batches only, no domain head (~50 min):** Set `DANN_ALPHA_MAX=0.0`, `CDANN=False`, `BALANCE_BATCHES=True`.
+   We've never isolated how much of Exp 4's gain is the sampler vs. the adversarial head. If this scores ~0.24+, C-DANN is adding little.
+
+4. **Field-val split (research, not a one-line change):** The val set is 99% D5 so val_BA is blind to BAunseen.
+   To fix model selection, we would need to move some D1–D4 training clips into the val set. Caveat: we tried
+   field-domain BA early stopping before (AttnPool experiment) and it spuriously fired at ep20 because only 3 D4
+   val clips exist — any fix requires meaningfully more field-domain val samples, which means taking them from training.
+   Worth planning but not trivial.
+
+5. **Exp E — 10-seed sweep of Exp 4 (~8 hrs):** Ground truth for Exp 4 mean BAunseen.
+   Single-seed baseline ranged 0.147–0.209 (~30%); Exp 4 at seed 42 could be similarly variable.
 
 ---
 
