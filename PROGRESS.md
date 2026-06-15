@@ -1,13 +1,13 @@
 # CD-MSC Project Progress & Technical Notes
 
-Branch: `aaron/preprocessing` | Collaborator: saha23s | **Deadline: 2026-06-15**
+Branch: `aaron/preprocessing` | Collaborator: saha23s | Deadline: passed 2026-06-15
 
 ---
 
 ## Environment & Setup
 
 - Repo: shared fork `saha23s/CD-MSC`, working branch `aaron/preprocessing`
-- Collaborator saha23s has branch `feature/lodo-ast-augmentation` (Leave-One-Domain-Out + AST + augmentation)
+- Collaborator saha23s has branch `feature/lodo-ast-augmentation` (AST — did not improve BAunseen, see below)
 - Local venv set up; `CLAUDE.md` committed with full architecture docs
 - Evaluation set released 2026-06-01 on Zenodo (link in README.md line 9) — not yet downloaded
 
@@ -17,7 +17,7 @@ Branch: `aaron/preprocessing` | Collaborator: saha23s | **Deadline: 2026-06-15**
 
 - 271K clips, 9 species, 5 domains (D1–D5)
 - Raw audio: `Development_data/raw_audio/` (local + Drive, gitignored)
-- Metadata split files: `Development_data/metadata/` (committed to repo 2026-06-05 — were missing, caused Colab FileNotFoundError on fresh clone)
+- Metadata split files: `Development_data/metadata/` (committed to repo)
 - Features: `Development_data/feature/*.pkl` (~5 GB, backed up to `MyDrive/CD-MSC-feature`)
 
 ### Domain Distribution in Training
@@ -35,35 +35,39 @@ controlled lab study; D1–D4 are scarce real-world field recordings.
 
 ### Per-Species Unseen Domain Assignments (from split_summary.json)
 
-| Species | Unseen test domain | Notes |
-|---------|--------------------|-------|
-| Ae. aegypti | D3 | |
-| Ae. albopictus | D2 | |
-| Cx. quinquefasciatus | D1 | |
-| An. gambiae | D1 | |
-| An. arabiensis | D1 | |
-| **An. dirus** | **D4** | 76 training samples total; D4 has only 80 samples across all species |
-| Cx. pipiens | D3 | |
-| **An. minimus** | **D2** | ALL test samples are in unseen domain |
-| **An. stephensi** | **D4** | ALL test samples are in unseen domain |
+| Species | Unseen domain | Test clips | Notes |
+|---------|--------------|-----------|-------|
+| Ae. aegypti | D3 | 8,159 | Has seen clips too |
+| Ae. albopictus | D2 | 1,852 | Has seen clips too |
+| Cx. quinquefasciatus | D1 | 7,206 | Has seen clips too |
+| An. gambiae | D1 | 4,700 | Has seen clips too |
+| An. arabiensis | D1 | 2,112 | Has seen clips too |
+| **An. dirus** | **D4** | **40** | ALL 40 test clips are D4 — ALL unseen; only 127 clips total |
+| Cx. pipiens | D3 | 2,975 | Has seen clips too |
+| **An. minimus** | **D2** | **99** | ALL 99 test clips are D2 — ALL unseen; only 550 clips total |
+| **An. stephensi** | **D4** | **74** | ALL 74 test clips are D4 — ALL unseen; only 674 clips total |
 
-An. dirus, An. minimus, and An. stephensi have zero seen-domain test samples —
-their entire test evaluation is in the unseen domain. Any domain adaptation method
-must not destroy their features.
+**The three bold species determine BAunseen.** They have zero training data in their
+unseen test domain. Any improvement to BAunseen must come from these three species
+generalising from D5 lab recordings to field conditions they have never seen.
 
-### Why the Authors Chose This Split
+### How BAunseen and DSG Are Calculated
 
-The per-species unseen domain assignment is deliberate. D5 is always in training
-(it's the only domain with enough data to train on), and one scarce field domain is
-withheld per species as the unseen test. The assignment is constrained by which field
-domains each species actually has data in — An. dirus only exists in D4 and D5, so
-D4 was the only viable unseen domain for it.
+Each species has one designated unseen domain. Test clips are partitioned:
+- **unseen**: clip's domain matches that species' unseen domain
+- **seen**: all other test clips
 
-The split is challenging by design: you train almost entirely on clean lab audio (D5)
-and are tested on field conditions. The train/val/test assignment of sample IDs is
-**fixed by the challenge** and must not be changed (results would be incomparable to
-the baseline and other teams). What we *can* change is how we sample from training
-data (batch balancing, oversampling).
+```
+BAunseen = mean per-class recall across all 9 species, evaluated only on unseen clips
+BAseen   = mean per-class recall, evaluated only on seen clips
+           (An. dirus, An. minimus, An. stephensi excluded — all their test clips are unseen)
+DSG      = |BAunseen − BAseen|   (lower = better generalisation)
+```
+
+Ceiling analysis: if An. dirus, An. minimus, and An. stephensi all score 0% recall
+(no unseen-domain training data), they drag BAunseen down by 3/9 of the average.
+The other 6 species must average ~39% recall in their unseen domains to produce
+BAunseen = 0.2626 (our current best).
 
 ---
 
@@ -71,136 +75,154 @@ data (batch balancing, oversampling).
 
 | Metric | Test |
 |--------|------|
-| BAseen | 0.88 ± 0.01 |
-| BAunseen | 0.18 ± 0.02 |
-| DSG | 0.71 ± 0.02 |
+| BAseen | 0.8806 ± 0.01 |
+| BAunseen | 0.1751 ± 0.02 |
+| DSG | 0.7055 ± 0.02 |
 
 Seed 42 single run: BAseen=0.883, BAunseen=0.168, DSG=0.716
 
-Per-domain species balanced accuracy (seed 42): D5=0.883, D1=0.415, D3=0.274, D4=0.145, D2=0.146
-The model essentially only works on D5.
+---
+
+## All Experiments (chronological)
+
+| ID | Config | BAseen | BAunseen | DSG | Verdict |
+|----|--------|--------|----------|-----|---------|
+| Baseline (10-seed) | Released baseline | 0.8806 | 0.1751 | 0.7055 | Reference |
+| Exp 1 | DANN α=1.0 | — | — | — | ❌ Collapsed ep13; α too high |
+| Exp 2 | DANN α=0.3 | 0.8769 | 0.2225 | 0.6544 | ✅ +27% BAunseen |
+| Exp 3 | C-DANN α=0.3 | 0.8879 | 0.1865 | 0.7014 | ⚠️ Worse than Exp 2; no balancing |
+| **Exp 4** | **C-DANN α=0.3 + balanced batches** | **0.7950** | **0.2626** | **0.5324** | **✅ BEST — benchmark to beat** |
+| Exp 5 | Exp 4 + B128 + SpecAugment | 0.7227 | 0.2308 | 0.4919 | ⚠️ Worse; SpecAug hurt rare clips |
+| Exp 6 | Exp 4 + CMN + D5noise(0.1) | ~0.79 | 0.2452 | ~0.54 | ⚠️ Marginal; preprocessing not helpful |
+| SupCon-A | SupCon 1.0, no DANN, sxd-balanced | — | 0.2008 | — | ❌ Worse; D5-only positives useless for bottleneck species |
+| SupCon-B | Exp 4 + SupCon 1.0 | ~0.80 | 0.2436 | 0.5538 | ⚠️ Below Exp 4 |
+| SupCon-C | Exp 4 + SupCon 0.5 + freqshift±3 | ~0.72 | 0.2303 | 0.4869 | ❌ Confounded; freqshift collapsed BAseen |
+| HM-1 | Exp 4 + approx HPSS + hist_match | — | — | — | ❌ Collapsed; domain stats bug (wrong source distribution) |
+| HM-2 | Exp 4 + hist_match only | 0.3030 | 0.2495 | 0.0534 | ❌ BAseen collapsed; D5 train/test distribution mismatch |
+| **AttnPool** | **Exp 4 + learned frame attention** | — | — | — | **🔄 RUNNING NOW** |
+
+BAseen for SupCon-B/C derived from DSG (BAseen = BAunseen + DSG); BAseen for SupCon-A not recorded.
+
+### Why Each Approach Failed
+
+**Exp 1 (DANN α=1.0):** Ganin schedule reaches λ≈0.57 by epoch 13. With D5 at 99.4%
+of batches, the domain gradient is large and mostly "D5 vs rest." Negated at α=1.0,
+it overwhelmed species learning. Both metrics collapsed to random chance simultaneously.
+
+**Exp 3 (C-DANN without balancing):** Without balanced batches, nearly every batch is
+all-D5. The domain discriminator only sees D5 vs. tiny D1–D4 representation, producing
+a weak and noisy adversarial signal. Balancing (Exp 4) fixed this.
+
+**Exp 5 (SpecAugment):** Time masks up to 40 frames and freq masks up to 10/64 mel bins
+are too aggressive for heavily oversampled rare clips (An. dirus has only ~80 D4 training
+clips; masking large portions of each destroys the species signal). SpecAugment also
+caused BAseen to fall more than BAunseen, suggesting it hurt D5 performance without
+helping field generalisation.
+
+**SupCon-A/B/C (Supervised Contrastive):** SupCon pulls same-species embeddings together.
+But for An. dirus, An. minimus, An. stephensi — the species that determine BAunseen —
+all in-batch positives are D5 vs D5. SupCon tightens D5 clusters for these species but
+has no mechanism for cross-domain generalisation (no cross-domain positives exist for them).
+At weight 1.0 it actively hurt (0.2436 vs 0.2626) by competing with C-DANN's domain-invariance
+gradient in the 32-dim embedding. SupCon-C was additionally confounded by freqshift±3 bins,
+which randomly displaced species-discriminative mel bins (~30 Hz at wingbeat frequencies,
+enough to shift An. arabiensis toward An. gambiae).
+
+**HM-1 (HPSS + hist_match):** domain_feature_stats.json was computed from raw features,
+but HPSS was applied before hist_match in __getitem__, so hist_match received HPSS-filtered
+features as source and raw stats as reference — wrong distribution. Val loss rose from
+5.5 → 7.5; training abandoned.
+
+**HM-2 (hist_match only):** Transforms D5 training clips to match D1–D4 statistics. But
+at test time D5 clips arrive untransformed — the model trains on fake-field D5 but is tested
+on real-lab D5. BAseen collapsed to 0.303. DSG was low (0.053) only because both seen and
+unseen performance were equally poor.
+
+**AST (collaborator saha23s, LODO branch):** Pretrained on AudioSet which contains no
+mosquito wingbeats — the pretrained representations have no spectral resolution for 20-80 Hz
+frequency differences between species. AST representations may also encode field background
+textures (AudioSet contains wind, traffic, crowds) and use them as domain signal rather than
+suppressing them. Additionally, fine-tuning ~87M parameters on datasets with only 127 An.
+dirus clips is catastrophic forgetting territory.
 
 ---
 
-## What's Implemented in the Repo
+## What's Implemented (committed to aaron/preprocessing)
 
-### Regular DANN with GRL (committed 2026-06-05)
+| Feature | Config flag | Notes |
+|---------|------------|-------|
+| DANN / C-DANN | `dann_alpha_max`, `cdann` | GRL + Ganin schedule; C-DANN conditions domain head on species one-hot |
+| Batch balancing | `batch_balance_domain`, `balance_mode` | WeightedRandomSampler; "domain" or "species_domain" |
+| SpecAugment | `spec_augment` | Off at eval; configurable mask sizes |
+| CMN | `cmn` | Applied at both train and eval |
+| D5 Gaussian noise | `d5_noise_std` | Train only, D5 clips only |
+| Delta features | `use_delta` | Appends time-delta to mel; model_n_mels doubles to 128 |
+| Freq shift | `freq_shift_bins` | Train only, D5 clips only; ±N mel bin roll |
+| Approx HPSS | `use_approx_hpss` | Wiener masking via median filter; applied at both train and eval |
+| Hist match | `hist_match` | D5 train clips only; requires domain_feature_stats.json on Drive |
+| SupCon | `supcon_weight`, `supcon_temperature` | Projection head 32→64→128, L2-normalised |
+| **Frame attention pool** | **`use_attention_pool`** | **Replaces masked_mean_max in each branch; 195 params total** |
 
-- `framework/model.py` — `GRL` class (torch.autograd.Function); `MTRCNNClassifier.forward()`
-  accepts optional `alpha` parameter; routes domain head through GRL when set,
-  original behaviour when `alpha=None`
-- `framework/engine.py` — `dann_alpha()` Ganin schedule function; `train_one_epoch()`
-  accepts `epoch`, `total_epochs`, `dann_alpha_max`
-- `train.py` — passes epoch info and `dann_alpha_max` from config; experiment name
-  includes `_dann{alpha}` suffix to avoid colliding with baseline output directories
-- `colab_dann.ipynb` — Colab notebook: clone/pull, restore features from Drive,
-  parameterised DANN_ALPHA_MAX/SEED cell, train, save to Drive, results comparison table
+Training notebook: `colab_dann.ipynb` — all flags exposed as Python variables in cell 6.
 
-### C-DANN (committed 2026-06-06)
+### Bugs Fixed (2026-06-15)
 
-- `framework/model.py` — `cdann` flag; `domain_classifier` input 32→41 when cdann=True;
-  `forward()` accepts `species_labels`, concatenates one-hot after GRL
-- `framework/engine.py` — `species_labels` passed to model in both train and eval
-- `train.py` — `_cdann` suffix added to experiment name when cdann=True
-- `colab_dann.ipynb` — `CDANN=True/False` parameter, wired into config cell
-- `CDANN.md` — standalone technical reference: An. dirus example, arch diagram, math
+1. **evaluate.py**: `use_approx_hpss` was not passed to dataset in `evaluate_checkpoint` —
+   HPSS models would have been evaluated on raw features (train/test feature mismatch).
+   No recorded results were affected (only the collapsed HM-1 used HPSS).
 
-### Batch Balancing via WeightedRandomSampler (committed 2026-06-06)
+2. **train.py**: Early stopping log message said "best validation species_balanced_accuracy"
+   but the actual criterion is mean D1–D4 field BA in the validation set. Checkpoint metadata
+   now correctly says `"selection_metric": "mean_field_domain_BA"`.
 
-- `train.py` — when `batch_balance_domain=True`, builds a `WeightedRandomSampler` with
-  **joint (species, domain) pair** inverse-frequency weights — rare (species, domain)
-  combinations get highest weight. D4 clips (~80 samples) are oversampled ~500× per epoch.
-  Addresses both domain imbalance AND per-species coverage in scarce field domains.
-  Experiment name gets `_balanced` suffix.
-- `colab_dann.ipynb` — `BALANCE_BATCHES=True/False` parameter
+3. **colab_dann.ipynb**: `balance_mode` was never written to cfg (silently defaulted to "domain"
+   — correct for all experiments so far, but wrong if "species_domain" was intended). Fixed.
+   Output dir print was hardcoded with stale `earlystop_min10_pati5`; now reads from cfg.
 
-### SpecAugment (committed 2026-06-08)
+### Known Limitation: Early Stopping Is Noisy
 
-- `framework/dataset.py` — `_spec_augment()` applies random time masking (0–40 frames) and
-  frequency masking (0–10 mel bins) after crop+normalize, training only.
-  `self.spec_augment = spec_augment and training` — automatically off at eval.
-- `train.py` — `spec_augment` params passed from config to dataset; `_specaug` suffix in name
-- `colab_dann.ipynb` — `SPEC_AUGMENT=True/False` parameter (default True)
-
----
-
-## Experiments Run
-
-### Experiment 5 — C-DANN alpha=0.3 + Balanced + Batch=128 + SpecAugment (2026-06-08) ⚠️ WORSE THAN EXP 4
-
-| Metric | Baseline mean | Exp 4 (prev best) | Exp 5 | Change vs Exp 4 |
-|--------|--------------|-------------------|-------|-----------------|
-| BAseen | 0.8806 | 0.7950 | 0.7227 | −0.072 |
-| **BAunseen** | **0.1751** | **0.2626** | **0.2308** | **−0.032** |
-| **DSG** | **0.7055** | **0.5324** | **0.4919** | **−0.041** |
-
-Adding SpecAugment (time_mask=40, freq_mask=10) and doubling batch size 64→128 degraded BAunseen vs Exp 4.
-Two likely causes:
-1. **SpecAugment too aggressive for rare species**: ~80 D4 clips are oversampled heavily. Randomly masking
-   up to 10 mel bins of 64 frequently destroys wingbeat harmonics in the (species, domain) pairs that
-   matter most for BAunseen. The signal band is narrow and masks are not domain-aware.
-2. **Fewer gradient updates per epoch**: `WeightedRandomSampler` keeps `num_samples=len(train_dataset)`;
-   batch=128 gives half as many `.backward()` calls per epoch as batch=64.
-
-DSG improved slightly (0.5324→0.4919) only because BAseen fell faster than BAunseen — not a genuine gain.
-**Lesson**: SpecAugment needs careful tuning (smaller masks, or majority-domain-only) when rare field clips
-are already scarce and heavily oversampled.
+The val set is ~12.5% of trainval, which is itself ~99.4% D5. So D1–D4 validation clips
+number only ~180 total across 4 domains × 9 species — roughly 5 clips per bucket. The
+mean D1–D4 field BA used for early stopping is extremely noisy at this scale; a single
+lucky epoch can spike to ~0.99 (observed in HM-2, caused premature stopping at ep30).
+**When watching a run**, be suspicious if early stopping fires before epoch 40.
 
 ---
 
-### Experiment 4 — C-DANN alpha=0.3 + Balanced Batches (2026-06-08) ✅ BEST SO FAR
+## Current Experiment: Frame Attention Pooling (AttnPool)
 
-| Metric | Baseline 10-seed mean | Baseline seed 42 | C-DANN+Balanced | Change vs baseline mean |
-|--------|----------------------|------------------|-----------------|------------------------|
-| BAseen | 0.8806 | 0.8813 | 0.7950 | -0.086 |
-| **BAunseen** | **0.1751** | **0.1557** | **0.2626** | **+0.087 (+50%)** |
-| **DSG** | **0.7055** | **0.7255** | **0.5324** | **-0.173** |
+**What it changes:** Replaces `masked_mean_max` in each of the three MTRCNN branches
+with a learned `FrameAttentionPool` module. Scores each valid time frame by passing its
+channel-mean vector through Linear(64→1), then softmax-weights the frames before summing.
 
-Single seed (seed=42). Best result so far. BAunseen improved 50% relative over the
-official baseline. DSG dropped by 0.173 — the largest domain gap reduction yet.
-BAseen fell to 0.795 (−0.086 vs baseline) — expected tradeoff from forcing the model
-away from D5 specialisation. Since BAunseen is the primary challenge metric this is
-a strong result. Batch balancing appears to be the dominant driver — the adversarial
-signal became meaningful for the first time with balanced domain representation per batch.
+**Rationale:** Mean+max pooling treats all valid frames equally. A field recording of
+An. dirus in D4 has the wingbeat present for only a fraction of the clip; the rest is
+D4-specific background noise. If the model learns to upweight clean wingbeat frames —
+which it has seen in D5 lab recordings — the D5 representation may transfer to field
+conditions more cleanly, directly helping the three bottleneck species.
 
-### Experiment 3 — C-DANN, alpha_max=0.3 (2026-06-06) ⚠️ BELOW REGULAR DANN
+**Config:** Identical to Exp 4 except `use_attention_pool=True`. Only 195 new parameters
+(3 branches × Linear(64→1)+bias). Output dir: `MTRCNN_seed42_B64_E100_earlystop_min20_pati10_dann0.3_cdann_balanced_attnpool/`
 
-| Metric | Baseline 10-seed mean | Baseline seed 42 | C-DANN alpha=0.3 | Change vs baseline mean |
-|--------|----------------------|------------------|-----------------|------------------------|
-| BAseen | 0.8806 | 0.8813 | 0.8879 | +0.007 |
-| **BAunseen** | **0.1751** | **0.1557** | **0.1865** | **+0.011 (+6.5%)** |
-| **DSG** | **0.7055** | **0.7255** | **0.7014** | **-0.004** |
+**Interpreting the result:**
+- BAunseen > 0.2626: noise dilution in pooling was a real problem; attention helps
+- BAunseen ≈ Exp 4: pooling is not the bottleneck; move to feature-level augmentation
+- BAunseen < 0.2626: mean+max was doing something useful; investigate why
 
-Single seed (seed=42). BAunseen improved over baseline but fell short of regular DANN
-alpha=0.3 (0.2225). Hypothesis: C-DANN's stronger discriminator (has species one-hot,
-so it can predict domain more easily) effectively increases adversarial pressure at the
-same alpha, partially collapsing species features. Next step: try C-DANN with alpha=0.1.
+---
 
-### Experiment 2 — Regular DANN, alpha_max=0.3 (2026-06-05) ✅ BEST SO FAR
+## Next Steps (priority order after AttnPool result)
 
-| Metric | Baseline 10-seed mean | Baseline seed 42 | DANN alpha=0.3 | Change vs baseline mean |
-|--------|----------------------|------------------|----------------|------------------------|
-| BAseen | 0.8806 | 0.8813 | 0.8769 | -0.004 (negligible) |
-| **BAunseen** | **0.1751** | **0.1557** | **0.2225** | **+0.047 (+27%)** |
-| **DSG** | **0.7055** | **0.7255** | **0.6544** | **-0.051** |
-
-Single seed (seed=42). BAunseen improved 27% relative over the official baseline while
-BAseen barely changed — exactly the desired pattern. DSG dropped by 0.051. Strong
-result for a first stable DANN run. Checkpoint and metrics saved to Drive:
-`MyDrive/CD-MSC-outputs/MTRCNN_seed42_B64_E100_earlystop_min10_pati5_dann0.3/`
-
-### Experiment 1 — Regular DANN, alpha_max=1.0 (2026-06-05) ❌ COLLAPSED
-
-**Result:** Collapsed at epoch 13.
-- Species balanced accuracy → 0.111 (= 1/9, random chance)
-- Domain balanced accuracy → 0.200 (= 1/5, random chance)
-- Run cancelled.
-
-**Why it failed:** At epoch 13 (p=0.13), the Ganin schedule gives λ≈0.57.
-D5 dominates 99.4% of training batches, so the domain gradient is large and
-mostly "D5-vs-rest" signal. Negated and scaled to 0.57, it overwhelmed species
-learning. The embedding collapsed to noise — domain-invariant but also
-species-invariant (both metrics at random chance simultaneously).
+1. **If AttnPool wins:** Run 2–3 more seeds to confirm, then combine with FDA
+2. **If AttnPool ties/loses:** Try FDA (Fourier Domain Adaptation) — directly synthesises
+   field-domain versions of D5 clips by swapping low-frequency STFT amplitude with D1–D4
+   clips at training time. Requires raw audio on Drive (confirmed available as zip).
+   Most principled augmentation for the bottleneck species problem.
+3. **Per-clip CMVN:** Extend CMN (mean-only) to full mean+variance normalisation per clip.
+   Removes both DC offset and gain differences from features without domain labels.
+   One-line change; worth a quick ablation against Exp 4.
+4. **PCEN:** Replace log-mel with Per-Channel Energy Normalisation. Adapts to local noise
+   floor, making features more robust to variable field SNR. Requires re-extraction.
 
 ---
 
@@ -226,267 +248,53 @@ embedding = F.gelu(self.embedding(features))   # Linear(192 → 32) + GELU
 This gives **z ∈ ℝ³²** — a single vector per sample summarising the entire recording.
 This is the "neck" between backbone and heads. Everything downstream reads only from z.
 
-### 2. What a Classifier Head Actually Is
+### 2. Frame Attention Pooling (new in AttnPool experiment)
 
-Each head is just a single linear layer — no hidden layers, no activation:
+Replaces `masked_mean_max` inside each branch:
 
-```
-species head:  ŷ_s = W_s · z + b_s    W_s ∈ ℝ^{9×32},  ŷ_s ∈ ℝ⁹
-domain head:   ŷ_d = W_d · z + b_d    W_d ∈ ℝ^{5×32},  ŷ_d ∈ ℝ⁵
-```
-
-These raw outputs are called **logits** — unnormalised scores. To get probabilities
-you'd apply softmax, but cross-entropy loss does this internally:
-
-```
-L_species = -log( exp(ŷ_s[y]) / Σ_k exp(ŷ_s[k]) )   for true class y
+```python
+frame_feat = branch_output.mean(dim=-1).permute(0, 2, 1)  # [B, T, C=64]
+scores = Linear(64, 1)(frame_feat)                          # [B, T, 1]
+scores[invalid_frames] = -inf                               # mask padding
+gate = softmax(scores, dim=1)                               # [B, T, 1]
+pooled = (branch_output * gate).sum(dim=2)                  # [B, C, F]
 ```
 
-**Why keep the heads simple?** The backbone has to do all the hard representational
-work. If the heads had hidden layers, they could compensate for a weak backbone.
-A single linear layer forces z to already be the right representation.
+65 parameters per branch (64 weights + 1 bias), 195 total. The gate is trained
+end-to-end — no separate objective. Output shape identical to `masked_mean_max`
+so no downstream changes needed.
 
-### 3. Gradient Flow With Two Heads (Baseline, No GRL)
+### 3. DANN and C-DANN
 
-When `.backward()` is called, PyTorch walks the computation graph from the loss
-back through every parameter. With two heads sharing the same z:
+**DANN**: GRL inserted between embedding z and domain head. In the backward pass,
+domain gradient is negated and scaled by λ, pushing the backbone toward
+domain-invariant features (minimax game). Ganin lambda schedule ramps λ from 0
+to alpha_max over training to avoid early collapse.
 
-```
-L = L_species + L_domain
+**C-DANN**: Domain classifier conditioned on species one-hot:
+`domain_input = [z || onehot(species)]  →  W_d ∈ ℝ^{5×41}`
+Targets conditional domain invariance `p(domain | z, species) ≈ uniform` rather
+than marginal — preserves species-correlated features while removing recording
+environment artefacts. Critical for An. dirus/minimus/stephensi whose species
+identity is correlated with their (limited) domain.
 
-∂L/∂W_s        = ∂L_species/∂W_s              (species head only)
-∂L/∂W_d        = ∂L_domain/∂W_d               (domain head only)
-∂L/∂θ_backbone = ∂L_species/∂θ_backbone + ∂L_domain/∂θ_backbone
-```
+**Key finding**: Batch balancing (WeightedRandomSampler by domain) was the dominant
+driver of Exp 4's improvement. Without balanced batches (Exp 3), C-DANN was worse
+than regular DANN. With balanced batches (Exp 4), the combination was best so far.
 
-Both gradients flow back through z into the shared backbone. The domain gradient
-says: *adjust the backbone so z predicts domain better.* This is **multi-task
-learning** — the domain head is auxiliary supervision. It shapes the representation
-but does NOT enforce domain invariance.
+### 4. How to Read the Training Metrics
 
-### 4. The GRL: Flipping One Gradient Stream
-
-The GRL is inserted between z and the domain head. Mathematically it defines `g_λ`:
-
-```
-Forward:   g_λ(z) = z                     (identity — no effect on predictions)
-Backward:  ∂g_λ/∂z = −λI                 (negated and scaled)
-```
-
-The forward pass is untouched — the domain head still computes normal cross-entropy.
-But when `.backward()` propagates the domain gradient through the GRL, it gets negated:
-
-```
-Without GRL:  ∂L/∂θ_backbone = ∂L_species/∂θ_backbone  +  λ·∂L_domain/∂θ_backbone
-With GRL:     ∂L/∂θ_backbone = ∂L_species/∂θ_backbone  −  λ·∂L_domain/∂θ_backbone
-```
-
-The sign flip changes "improve domain prediction" → "worsen domain prediction."
-The domain head still tries to get better at predicting domain; the backbone tries
-to prevent it. This is a minimax game:
-
-```
-min_{θ_f, θ_s}  max_{θ_d}  [ L_species(θ_f, θ_s) − λ · L_domain(θ_f, θ_d) ]
-```
-
-At the **saddle point**, the domain classifier performs at chance (~20% for 5 classes),
-meaning z contains zero domain information. The GRL solves this with ordinary SGD
-in a single `.backward()` call — no alternating training phases needed.
-
-### 5. Lambda Scheduling: Why You Can't Start at λ=1
-
-Early in training, z is essentially random. If λ=1 immediately, the domain gradient
-(even negated) is large and noisy — it competes with species learning before the
-backbone has learned anything useful. The Ganin schedule:
-
-```
-λ(p) = alpha_max · [ 2 / (1 + exp(−10p)) − 1 ]    p = epoch / total_epochs ∈ [0,1]
-```
-
-| Progress p | epoch (of 100) | λ (alpha_max=1.0) | λ (alpha_max=0.3) |
-|---|---|---|---|
-| 0.00 | 1 | 0.00 | 0.00 |
-| 0.13 | 13 | **0.57** | **0.17** |
-| 0.30 | 30 | 0.82 | 0.25 |
-| 0.50 | 50 | 0.92 | 0.28 |
-| 1.00 | 100 | 1.00 | 0.30 |
-
-With alpha_max=1.0, λ reaches 0.57 by epoch 13 — this is what caused the collapse.
-With alpha_max=0.3, λ is only 0.17 at epoch 13, giving species learning time to
-stabilise before adversarial pressure builds. The maximum pressure ever applied is
-0.30, which is much more conservative.
-
-### 6. How to Read the Training Metrics
-
-Each epoch logs:
-
-| Metric | What it means | What to watch for |
-|--------|--------------|-------------------|
-| `train_species_loss` | Cross-entropy on species classification | Should decrease and stay low (~0.5–1.5) |
-| `train_domain_loss` | Cross-entropy on domain prediction (through GRL) | Will fluctuate — not a reliable signal |
-| `train_species_accuracy` | Fraction correctly classified (per-sample) | Should be high (>0.80) |
-| `train_domain_accuracy` | Fraction correctly classified by domain | **Want this to FALL** toward ~0.2 (chance) |
-| `val_species_balanced_accuracy` | **Primary metric** — mean recall per species on val | Early stopping watches this; goal: match or beat baseline ~0.54 |
-| `val_domain_balanced_accuracy` | Mean recall per domain on val | Lower is better for DANN; chance = 0.2 |
-
-**Healthy DANN run:**
-- `train_domain_accuracy` gradually falls from ~0.9 toward 0.2–0.4
-- `val_species_balanced_accuracy` holds steady or improves vs baseline
-- Both losses decrease smoothly
+| Metric | What to watch for |
+|--------|-------------------|
+| `train_species_loss` | Should decrease; healthy range ~0.5–1.5 |
+| `train_domain_accuracy` | **Want this to FALL** toward ~0.2 (chance) — means DANN is working |
+| `val_species_balanced_accuracy` | Logged each epoch; should hold steady or rise |
+| `val_domain_balanced_accuracy` | Lower is better for DANN |
+| Early stopping criterion | Mean D1–D4 field BA in val set (very noisy — see Known Limitation above) |
 
 **Warning signs:**
-- `val_species_balanced_accuracy` collapses suddenly (alpha overwhelming species learning)
-- Both metrics fall to random chance simultaneously: species=0.111, domain=0.200 — full collapse, cancel the run
-- `train_domain_accuracy` stays above 0.8 throughout — adversary not working, features still domain-specific
-
-**Why domain_accuracy falling is a good sign:** it means the saddle point is being
-approached and the embedding is becoming domain-invariant.
-
-### 7. C-DANN: What Changes Mathematically
-
-Regular DANN makes z domain-invariant in the **marginal** sense:
-
-```
-p(domain | z) ≈ uniform
-```
-
-Problem: if species and domain are correlated (e.g. An. dirus appears almost
-exclusively in D4), then removing domain information also removes the only
-signal distinguishing An. dirus. Regular DANN may hurt rare species.
-
-C-DANN conditions the discriminator on the species label y:
-
-```
-ŷ_d = W_d · [z ; onehot(y)] + b_d    W_d ∈ ℝ^{5×41}  (32 + 9 = 41)
-```
-
-This targets the **conditional** distribution:
-
-```
-p(domain | z, y) ≈ uniform    for all y
-```
-
-"Given we already know the species, is there still domain information in z?"
-Only recording-environment artefacts are removed — species-correlated features
-survive. Critical for An. dirus, An. minimus, An. stephensi whose unseen test
-domain is their only test signal.
-
-**At inference:** the domain head is not used for predictions (only species_logits
-matter), so unavailability of ground-truth species labels at test time is not a
-problem.
-
-**Code changes needed for C-DANN:**
-- `framework/model.py`: `domain_classifier` input 32 → 41; `forward()` accepts
-  optional `species_labels` tensor and concatenates `onehot(species_labels)` to
-  the reversed embedding before the domain head
-- `framework/engine.py`: pass `species_labels` to model during training
-
----
-
-## Why alpha_max=0.3 and Not 0.5 or 0.1
-
-The collapse at alpha_max=1.0 was caused by the combination of:
-1. The Ganin schedule reaching λ≈0.57 by epoch 13 (13% of training)
-2. D5 dominating 99.4% of batches, making the domain gradient disproportionately large
-
-alpha_max=0.3 caps the maximum gradient reversal at 30% of the domain gradient
-at any point in training. Even at full strength (epoch 100), the adversarial signal
-is modest. This is conservative but the right call given the extreme domain imbalance.
-If results with 0.3 are stable, 0.5 is a reasonable next experiment.
-
----
-
-## Current Plan (priority order)
-
-### 1. Frame Gating — Exp 6 ← NEXT IMPLEMENTATION
-Learned per-frame attention weights gate each frame's contribution to the final embedding.
-Motivation: not all frames carry species signal. Background frames and domain-artefact frames
-(equipment hum, wind noise in field recordings) dilute the pooled embedding. A lightweight
-attention module lets the model learn to focus on frames containing wingbeat signal.
-
-**Implementation sketch** (inside `MTRCNNBranch` or before `masked_mean_max`):
-```
-frame_scores = Linear(64 → 1)(branch_output)   # [B, T, 1] gate logits
-gate = softmax(frame_scores, dim=1)             # normalised attention weights
-embedding = sum(gate * branch_output, dim=1)    # weighted mean instead of mean+max
-```
-The gate is trained end-to-end — no separate objective needed. Expected benefit for unseen
-field domains: model learns to ignore variable background noise and focus on wingbeat bursts.
-
-### 2. SpecAugment re-tuning
-Exp 5 showed default masks (time=40, freq=10) hurt BAunseen. Options:
-- Smaller masks: `time_mask=20, freq_mask=5`, keep batch=64
-- Domain-aware masking: apply SpecAugment only to D5 clips; field clips are too scarce to mask
-
-### 3. C-DANN alpha=0.1 + balanced batches
-Gentler adversarial pressure. C-DANN at 0.3 was below regular DANN without balancing; with
-balancing the combination improved (Exp 4). alpha=0.1 may recover BAseen without sacrificing BAunseen.
-
-### 4. Regular DANN + balanced batches (ablation)
-Set `CDANN=False`, `DANN_ALPHA_MAX=0.3`, `BALANCE_BATCHES=True`. Isolates whether C-DANN
-is contributing or if balancing alone accounts for the Exp 4 jump.
-
-### 5. Download evaluation set and generate submission predictions
-Evaluation set on Zenodo (link in README.md line 9). **Must be done before 2026-06-15.**
-
----
-
-## Preprocessing Ideas (Brainstormed, Not Yet Implemented)
-
-All of these target the core problem: D5 lab conditions look different from D1–D4 field conditions.
-The goal is either to make D5 training clips look more like field recordings, or to strip
-recording-environment information from both.
-
-### Signal Processing (require raw audio or re-extraction)
-
-**HPSS (Harmonic-Percussive Source Separation)**
-Decomposes audio into tonal (harmonic) and transient/noise (percussive) components. Keeping only the
-harmonic component suppresses broadband background noise (wind, rain, traffic) which is the main
-acoustic difference between D5 and field domains. Mosquito wingbeats are tonal — dominant harmonic
-at ~300–800 Hz. Requires raw audio; adds ~100ms per clip; needs re-running `extract_features.py`.
-
-**PCEN (Per-Channel Energy Normalisation)**
-Replaces log compression in feature extraction. Uses an exponential moving average to normalise
-against the local noise floor, making features more robust to variable background noise levels.
-Implemented in `librosa.pcen`. Requires re-running `extract_features.py` (new `config_signature`).
-
-**Gaussian Noise Injection**
-Add random white/pink noise to D5 clips during training to simulate field recording conditions.
-Simple, cheap, no re-extraction needed. Can approximate field domain SNR statistics.
-
-**Time Stretching / Speed Perturbation**
-Vary playback speed ±5–10%. Changes wingbeat frequency slightly — broadens training distribution.
-**Caution**: species wingbeat frequency IS the discriminative feature; aggressive stretching
-(>10%) may shift a sample across a species class boundary.
-
-### Feature-Space Methods (applicable to existing `.pkl` features)
-
-**CMN (Cepstral Mean Normalisation)**
-Subtract per-clip mean across time in mel/cepstral domain. Removes microphone and channel
-effects (DC offset in mel space). Fast — applicable directly to loaded features without
-re-extraction. Risk: removes low-frequency information that may carry species signal.
-
-**Histogram Matching / Feature Distribution Alignment**
-Match the mel-spectrogram statistics of D5 clips to D1–D4 domain statistics.
-Variants:
-- *Mean/variance alignment*: shift and scale each frequency bin of D5 clips to match D1–D4
-  mean and std. Lightweight; can be computed from existing pkl statistics.
-- *Full histogram matching*: match the per-bin cumulative distribution of D5 to D1–D4.
-  More aggressive; preserves rank ordering.
-This is essentially feature-space domain randomisation — the model sees D5 content with
-D1–D4 spectral "clothing" applied as augmentation during training.
-
-### Audio-Space Domain Transfer
-
-**Fourier Domain Adaptation (FDA — Yang & Soatto 2020)**
-Swap the amplitude spectrum of a D5 clip's STFT with one sampled from a D1–D4 clip,
-keeping the D5 phase intact. The result has D5's temporal structure but D1–D4's
-frequency coloring (noise floor, spectral tilt).
-- Implemented at training time by sampling a random D1–D4 clip per D5 clip in each batch
-- Swap only low-frequency components (below threshold β in the 2D STFT) to preserve
-  high-frequency wingbeat detail
-- Requires raw audio in the training loop; eval can still use precomputed `.pkl` features
-- Most direct method for domain appearance transfer; well-studied in vision (less so in audio)
+- Both species and domain accuracy fall to random chance (1/9=0.11, 1/5=0.20) simultaneously → full collapse, cancel the run
+- Val species BA collapses suddenly → alpha overwhelming species learning
 
 ---
 
@@ -495,9 +303,10 @@ frequency coloring (noise floor, spectral tilt).
 | Thing | Location |
 |---|---|
 | Raw audio | `Development_data/raw_audio/` (local + Drive, gitignored) |
-| Metadata | `Development_data/metadata/` (in repo) |
 | Features | Drive: `MyDrive/CD-MSC-feature` (restored by colab_dann.ipynb) |
-| Released baseline checkpoints | `outputs/MTRCNN_seed*/model/` (in repo) |
-| Colab quickstart | `colab_quickstart.ipynb` |
-| DANN training notebook | `colab_dann.ipynb` |
+| Domain feature stats | Drive: `MyDrive/CD-MSC-feature/domain_feature_stats.json` |
+| Released baseline checkpoints | `outputs/MTRCNN_seed42_B64_E100_earlystop_min10_pati5/` (in repo) |
+| Experiment outputs | Drive: `MyDrive/CD-MSC-outputs/` (saved at end of each Colab run) |
+| Training notebook | `colab_dann.ipynb` — all experiment flags in cell 6 |
 | Evaluation set | Not yet downloaded — Zenodo link in README.md line 9 |
+| Brainstorm doc | `docs/brainstorm_jun2026.md` |
