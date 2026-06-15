@@ -100,6 +100,7 @@ Seed 42 single run: BAseen=0.883, BAunseen=0.168, DSG=0.716
 | HM-1 | Exp 4 + approx HPSS + hist_match | — | — | — | ❌ Collapsed; domain stats bug (wrong source distribution) |
 | HM-2 | Exp 4 + hist_match only | 0.3030 | 0.2495 | 0.0534 | ❌ BAseen collapsed; D5 train/test distribution mismatch |
 | AttnPool | Exp 4 + learned frame attention pool | 0.7085 | 0.2148 | 0.4936 | ❌ Worse than Exp 4; max pooling was useful; spurious early stop at ep20 |
+| FDA | Exp 4 + Fourier Domain Adaptation (β=0.05, p=0.5) | 0.7983 | 0.2490 | 0.5493 | ❌ Worse than Exp 4; val_BA=0.838 (new high) but BAunseen fell; val_BA ≠ BAunseen |
 
 BAseen for SupCon-B/C derived from DSG (BAseen = BAunseen + DSG); BAseen for SupCon-A not recorded.
 
@@ -152,6 +153,15 @@ frequency differences between species. AST representations may also encode field
 textures (AudioSet contains wind, traffic, crowds) and use them as domain signal rather than
 suppressing them. Additionally, fine-tuning ~87M parameters on datasets with only 127 An.
 dirus clips is catastrophic forgetting territory.
+
+**FDA (Fourier Domain Adaptation, β=0.05):** val_BA reached 0.838 — highest observed — but
+BAunseen fell to 0.2490 (below Exp 4's 0.2626). Two mechanisms likely interfered: (a) the
+val set is ~99% D5, so any improvement to D5 performance boosts val_BA without helping field
+generalisation — val_BA is not a reliable proxy for BAunseen; (b) FDA modifies the D5 training
+distribution, but C-DANN's adversarial gradient is calibrated for a natural D5-heavy distribution;
+adding synthetic "hybrid" clips makes that gradient noisier without creating clips that truly
+resemble test-time field recordings. Result: model adapts to FDA artifacts rather than real
+domain shift. A lower β (e.g. 0.01) or applying FDA without DANN might be fairer comparisons.
 
 ---
 
@@ -224,41 +234,29 @@ submission optimises (BAunseen averaged across species). See also: Known Limitat
 
 ---
 
-## Next Experiment: FDA (Fourier Domain Adaptation)
+## FDA Result and Analysis (2026-06-15)
 
-**What it does:** At training time, for each D5 clip, randomly select a D1–D4 clip and swap
-the low-frequency 2D Fourier amplitude components of the log-mel spectrogram. The modified
-clip retains its original species label. This creates synthetic "field-condition" versions of
-D5 clips, giving the bottleneck species (An. dirus, An. minimus, An. stephensi) fake cross-
-domain training examples without needing real field recordings of them.
+**Result:** best checkpoint (ep29): BAseen=0.7983, BAunseen=**0.2490**, DSG=0.5493.
+Final checkpoint (ep39): BAseen=0.7791, BAunseen=0.2372, DSG=0.5419.
+Early stopping fired at ep39 (best ep=29, patience=10, min_epoch=20).
 
-**Why this is better than prior augmentation attempts:**
-- **HM (histogram match)** operated on the marginal amplitude distribution — too blunt, caused
-  train/test mismatch at test time. FDA operates on frequency *structure*, not amplitude levels.
-- **SpecAugment** masked random regions — irrelevant to domain transfer.
-- **D5 noise** added Gaussian noise — doesn't mimic field domain coloration structure.
-- FDA targets exactly what differs between D5 (lab, quiet, flat response) and D1–D4 (field,
-  ambient noise, non-flat recording equipment): the coarse spectral envelope and slow temporal
-  variations, which are the low-spatial-frequency components of the 2D spectrogram.
+**Verdict: ❌ Worse than Exp 4** (BAunseen 0.2490 < 0.2626). FDA hurt.
 
-**Key parameter — β:** controls the fraction of the 2D Fourier spectrum to swap.
-- Small β (0.01–0.05): swap only DC and very coarse patterns → safe, targets room acoustics
-- Large β (>0.1): begins to swap species-discriminative structure → risky
+**Key diagnostic — val_BA ≠ BAunseen:** val_BA peaked at **0.838** (ep29) — the highest
+val_BA observed in any experiment. But BAunseen fell relative to Exp 4. This decoupling is
+fundamental: the validation set is ~99% D5. A model that improves D5 performance always
+increases val_BA, regardless of whether field generalisation improved or worsened. Val_BA is
+not a reliable proxy for BAunseen. We are essentially blind to domain-shift progress during
+training unless we use the test set (which we must not optimise against).
 
-**Safety concern:** making domains sound "too similar." FDA with small β is safe because:
-species identity (wingbeat oscillations ~400–800 Hz, rapid temporal pattern) lives in HIGH
-spatial-frequency 2D Fourier components. Domain identity (room acoustics, equipment coloration)
-lives in LOW spatial-frequency components. With β≤0.05 we only touch the latter.
-
-**Config plan:** Exp 4 base (C-DANN α=0.3, balanced, no AttnPool) + `use_fda=True`, `fda_beta=0.05`,
-`fda_prob=0.5` (applied with 50% probability per D5 clip). Revert early stopping to val species BA.
-
-**Implementation:** New flag `use_fda` in `dataset.py` MosquitoFeatureDataset, similar to
-`use_approx_hpss`. Requires access to D1–D4 clips at training time (already in training pkl).
-No feature re-extraction needed — FDA applied on-the-fly in `__getitem__`. Runtime overhead is
-negligible (2D FFT on [T, 64] is ~0.1ms).
-
-**Estimated runtime:** Similar to Exp 4 — ~40–70 minutes in Colab, 25–35 epochs.
+**Why FDA hurt on top of C-DANN:**
+- C-DANN's adversarial gradient is calibrated for the natural D5-heavy training distribution.
+  FDA adds synthetic "hybrid" clips with swapped Fourier amplitude; these clips are neither
+  clean D5 nor real field recordings, so DANN's gradient is optimising against a distribution
+  that doesn't exist at test time.
+- The model learns to handle FDA artifacts rather than generalising across real domain shift.
+- FDA without DANN (plain cross-entropy + FDA) or with smaller β (0.01) might be a fairer
+  test of the augmentation idea in isolation.
 
 ---
 
@@ -344,6 +342,88 @@ than regular DANN. With balanced batches (Exp 4), the combination was best so fa
 **Warning signs:**
 - Both species and domain accuracy fall to random chance (1/9=0.11, 1/5=0.20) simultaneously → full collapse, cancel the run
 - Val species BA collapses suddenly → alpha overwhelming species learning
+
+---
+
+## Where Things Live
+
+---
+
+## Research Findings & Brainstorming — June 15, 2026
+
+### Strategic reframe: D1 species are the highest-leverage target
+
+BAunseen is a mean across 9 species. An. dirus is likely stuck at 0 (76 clips, D4 unseen, zero across 10 seeds). Accepting that, the ceiling is 8/9 = 0.889. The real gains are in the three D1 species, which together have 3310 unseen test clips and large training datasets but currently contribute essentially zero:
+
+| Species | Training clips | D1 unseen test clips | Baseline BAunseen | If improved to 0.3 |
+|---------|---------------|---------------------|-------------------|--------------------|
+| An. arabiensis | 16,630 | 1820 | 0.002 | +0.033 to BAunseen |
+| An. gambiae | 37,011 | 818 | 0.0001 | +0.033 |
+| Cx. quinquefasciatus | 56,745 | 672 | 0.001 | +0.033 |
+
+Getting all three D1 species to 0.3 recall = **+0.10 to BAunseen**. This is the largest single lever available. FDA directly targets this by creating synthetic D1-like training clips. D1-heavy batch weighting (upweight D1 above equal-domain balance) is a one-line change that could help further.
+
+### Bee and insect bioacoustic research — key findings
+
+**Bricout et al. 2024 — "Bee Together" (*Sensors* 24(18))** — most directly relevant:
+- Standard CNN: 99.2% on seen hives, collapses to 34–84% on unseen hives — structurally identical to CD-MSC.
+- Fix: **pairwise xnorC classifier** — predicts whether two clips share the same label (binary) rather than predicting absolute class. Domain identity cancels out in relative comparisons.
+- Result: 99.98% extrapolation to unseen hives. Key lesson: cross-entropy training learns domain fingerprints; relative comparison does not.
+
+**Faiß & Stowell 2023 — "Adaptive representations" (*PMC*)** — LEAF learnable filterbank:
+- Replaces fixed 64-bin mel with trainable filterbank; beats mel across all dataset sizes.
+- Uses **room impulse response (RIR) augmentation**: convolve D5 clips with recorded room impulse responses → simulates different reverb environments without touching frequency content.
+- Critical insect frequency band: 100–600 Hz.
+
+**Ferreira et al. 2023/2025 (*Ecological Informatics*)** — 16 bee species, ~500 clips (similar scale to bottleneck species):
+- Pre-training + Mixup + random crop augmentation is critical at small dataset sizes.
+- 2025: AST (Audio Spectrogram Transformer) beats CNNs when pre-trained.
+
+**Hearon et al. 2025 — buzzdetect** — YAMNet transfer learning across 5 different crop field environments:
+- Works for detection but sensitivity is poor for quiet/short sounds.
+- Confirms YAMNet transfers across field environments for general detection; less clear for fine-grained species ID.
+
+**Faiß, Ghani & Stowell 2025 — InsectSet459** — 459 insect species mixed lab + field:
+- Established as a cross-domain benchmark; "good but significant room for improvement."
+
+### Planned Experiments — Priority Order
+
+**Exp A — Prototype inference on Exp 4 checkpoint (no retraining, ~20 min):**
+Load Exp 4's `model_best.pth`. Forward all training clips through the backbone to get 32-dim embeddings. Compute per-species mean embedding (the "prototype"). At inference, classify by cosine similarity to prototypes instead of the softmax head. Run `evaluate.py` in a modified mode to compare BAunseen.
+
+*Why:* Softmax is calibrated for D5. A D1 clip has a systematically shifted embedding; cosine similarity to the D5-trained prototype centroid may still be closer to the correct species than to others, especially if C-DANN created some domain-invariance in the embedding. No retraining, no GPU, no risk.
+
+**Exp B — D1-heavy batch weighting on Exp 4 (one training run, ~50 min):**
+Modify the `WeightedRandomSampler` in `train.py`: give D1 clips 3× the weight of D2–D4 clips (instead of equal 1× per domain). D5 weighting unchanged. Everything else = Exp 4 config.
+
+*Why:* An. arabiensis (1820 unseen test clips), An. gambiae (818), Cx. quinquefasciatus (672) all have D1 as their unseen domain and currently score near zero. They all have large D5 training datasets (16K–57K clips) — the bottleneck is D1 exposure, not data quantity. There are 634 D1 training clips total. Upweighting them gives the model more D1 passes per epoch without changing the training set.
+
+**Exp C — Per-clip CMVN on Exp 4 (one training run, ~50 min):**
+Normalize each clip to zero mean and unit variance **per mel bin over time**, applied at both train and test. This removes both gain (amplitude offset from microphone sensitivity) and variance (dynamic range differences) between recording environments. Unlike CMN (mean only) and unlike histogram matching (train-only → mismatch), CMVN is symmetric and stateless per clip.
+
+*Why:* D4's spectral peak at 223 Hz vs D5's 595 Hz could partly be a gain/response artifact rather than true spectral content difference. CMVN can't fix that, but it removes one dimension of inter-domain variation cheaply.
+
+**Exp D — FDA without C-DANN, β=0.01 (one training run, ~50 min):**
+Plain cross-entropy + balanced batches + FDA at β=0.01 (vs β=0.05 previously). No adversarial domain head. This isolates whether the Fourier augmentation mechanism has value independent of the interaction with DANN's gradient.
+
+*Why:* We only tested FDA entangled with C-DANN. If FDA alone (or with tiny β) beats the no-FDA baseline, it has merit and we can think about how to combine it more carefully.
+
+**Exp E — 10-seed sweep of Exp 4 (~8 hrs):**
+Run `run_multi_seed_experiments.py` with the Exp 4 config across all 10 standard seeds. Exp 4's single-seed result (BAunseen=0.2626) may be high or low relative to the true mean. The baseline 10-seed spread was 0.147–0.209 (~30% range) — Exp 4 could be similar.
+
+*Why:* We can't confidently claim any approach beats another without multi-seed results. This is the ground truth for Exp 4.
+
+### FDA result (2026-06-15, complete)
+
+**Negative result.** Best checkpoint ep29: BAunseen=0.2490 < Exp 4's 0.2626. Early stopped ep39.
+val_BA peaked at 0.838 — the highest val_BA observed — but this revealed a critical insight:
+**val_BA and BAunseen are decoupled.** Val set is ~99% D5; improving D5 performance raises
+val_BA without improving field generalisation. We are essentially blind during training to
+whether BAunseen is improving. This complicates early stopping and model selection fundamentally.
+
+Despite failing, FDA+C-DANN still strongly beats the vanilla baseline (0.2490 vs 0.1751 mean)
+— the C-DANN balancing is carrying the load. FDA alone may still be worth trying without DANN,
+or at smaller β, as a standalone augmentation on the Exp 4 base.
 
 ---
 
