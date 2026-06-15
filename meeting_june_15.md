@@ -120,8 +120,8 @@ We looked at the recent insect sound classification literature for ideas. Three 
 
 ## Next Steps (prioritised)
 
-**A — Prototype inference on Exp 4 checkpoint (no GPU needed, ~20 min)**
-Load the existing Exp 4 model. Compute the mean 32-dim embedding per species across all training clips (9 "prototype" vectors). At test time, classify by cosine similarity to prototypes instead of the softmax head. No retraining. Inspired by Bricout 2024's pairwise comparison approach for unseen beehives.
+**A — Prototype inference ✓ COMPLETE — negative result**
+Tested on FDA checkpoint. BAunseen fell from 0.2490 → 0.2419 (ΔBAunseen = −0.007). Per-species breakdown revealed that C-DANN's embedding is **not uniformly domain-invariant**: Cx. quinquefasciatus (+0.052) and Ae. albopictus (+0.064) gained, while An. minimus (−0.101) and Ae. aegypti (−0.067) lost. The softmax head compensates for residual domain bias that cosine distance cannot. Prototype inference dropped — not worth pursuing without metric learning or contrastive fine-tuning of the embedding.
 
 **B — D1-heavy batch weighting (~50 min training run)**
 An. arabiensis, An. gambiae, Cx. quinquefasciatus all have D1 as their unseen test domain and together account for 3310 unseen clips currently scoring near zero. There are 634 D1 training clips. One-line change: give D1 clips 3× weight in the sampler vs D2–D4.

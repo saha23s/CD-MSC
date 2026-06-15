@@ -388,10 +388,35 @@ Getting all three D1 species to 0.3 recall = **+0.10 to BAunseen**. This is the 
 
 ### Planned Experiments — Priority Order
 
-**Exp A — Prototype inference on Exp 4 checkpoint (no retraining, ~20 min):**
-Load Exp 4's `model_best.pth`. Forward all training clips through the backbone to get 32-dim embeddings. Compute per-species mean embedding (the "prototype"). At inference, classify by cosine similarity to prototypes instead of the softmax head. Run `evaluate.py` in a modified mode to compare BAunseen.
+**Exp A — Prototype inference on FDA checkpoint (COMPLETE, 2026-06-15):**
 
-*Why:* Softmax is calibrated for D5. A D1 clip has a systematically shifted embedding; cosine similarity to the D5-trained prototype centroid may still be closer to the correct species than to others, especially if C-DANN created some domain-invariance in the embedding. No retraining, no GPU, no risk.
+| Classifier | BAseen | BAunseen | DSG |
+|------------|--------|----------|-----|
+| Softmax (standard) | 0.7982 | 0.2490 | 0.5492 |
+| Prototype (cosine sim) | 0.7764 | 0.2419 | 0.5346 |
+| Delta | −0.022 | **−0.007** | −0.015 |
+
+Per-species (unseen domain recall):
+
+| Species | Softmax | Prototype | Delta | Unseen |
+|---------|---------|-----------|-------|--------|
+| Ae. aegypti | 0.737 | 0.671 | −0.067 | D3 |
+| Ae. albopictus | 0.585 | 0.649 | **+0.064** | D2 |
+| Cx. quinquefasciatus | 0.830 | 0.882 | **+0.052** | D1 |
+| An. gambiae | 0.677 | 0.630 | −0.047 | D1 |
+| An. arabiensis | 0.110 | 0.095 | −0.016 | D1 |
+| An. dirus | 0.000 | 0.000 | 0.000 | D4 |
+| Cx. pipiens | 0.875 | 0.886 | +0.012 | D3 |
+| An. minimus | 0.788 | 0.687 | **−0.101** | D2 |
+| An. stephensi | 0.243 | 0.257 | +0.014 | D4 |
+
+**Verdict: ❌ Negative overall.** Gains and losses cancel; net BAunseen −0.007.
+
+**Key insight — embedding domain-invariance is heterogeneous across species:**
+- Prototype helps species with large training sets where DANN embedding is well-aligned (Cx. qui 57K clips: +0.052, Ae. albo: +0.064)
+- Prototype hurts small-dataset species (An. minimus 395 clips: −0.101) and species where D5→field shift is large (Ae. aegypti: −0.067, An. gambiae: −0.047)
+- The softmax head partially compensates for residual domain bias that cosine distance to a D5 prototype cannot
+- Prototype inference dropped from the priority queue; may revisit after metric learning or contrastive fine-tuning
 
 **Exp B — D1-heavy batch weighting on Exp 4 (one training run, ~50 min):**
 Modify the `WeightedRandomSampler` in `train.py`: give D1 clips 3× the weight of D2–D4 clips (instead of equal 1× per domain). D5 weighting unchanged. Everything else = Exp 4 config.
