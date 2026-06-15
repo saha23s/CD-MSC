@@ -319,7 +319,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                         "config": config,
                         "epoch": epoch,
                         "val_metrics": best_val_metrics,
-                        "selection_metric": "species_balanced_accuracy",
+                        "selection_metric": "mean_field_domain_BA",
                     },
                     best_checkpoint_path,
                 )
@@ -329,7 +329,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
             if epoch >= early_stopping_min_epoch and epochs_without_improvement >= early_stopping_patience:
                 logger.info(
-                    "Early stopping at epoch %s. Best epoch: %s, best validation species_balanced_accuracy: %.6f, min_epoch: %s, patience: %s",
+                    "Early stopping at epoch %s. Best epoch: %s, best mean field-domain BA (D1-D4 val): %.6f, min_epoch: %s, patience: %s",
                     epoch,
                     best_epoch,
                     best_score,
