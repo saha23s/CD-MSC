@@ -26,7 +26,7 @@ from train_lodo import (
     load_pickle_items,
 )
 from framework.config import load_config
-from framework.dataset import LodoFeatureDataset, pad_collate_fn
+from framework.dataset import LodoFeatureDataset, pad_collate_fn, wingbeat_params_from_config
 from framework.metadata import DOMAIN_NAMES
 from framework.utilization import (
     build_model,
@@ -89,6 +89,7 @@ def eval_fold(config: Dict, fold: str, overwrite: bool) -> None:
         training=False,
         normalize_features=config["normalize_features"],
         clip_normalize=config.get("clip_normalize", False),
+        wingbeat_params=wingbeat_params_from_config(config),
     )
     val_loader = make_loader(
         val_dataset,

@@ -14,7 +14,13 @@ import torch
 
 from framework.acoustic_feature import LogMelSpectrogram, extract_log_mel_feature
 from framework.config import config_signature, feature_signature_payload, load_config
-from framework.dataset import load_feature_stats, validate_feature_stats_payload
+from framework.dataset import (
+    compute_wingbeat_descriptor,
+    load_feature_stats,
+    validate_feature_stats_payload,
+    wingbeat_band_bins,
+    wingbeat_params_from_config,
+)
 from framework.metadata import SPECIES_NAMES
 from framework.utilization import build_model, choose_device, training_stats_path
 
@@ -64,6 +70,13 @@ def main() -> None:
     print(f"loading from {args.checkpoint}")
     expected_training_stats_signature = config_signature(feature_signature_payload(config, "training"))
     validate_feature_stats_payload(training_stats_path(config), expected_training_stats_signature)
+    # Wingbeat descriptor on raw dB energy, before normalisation.
+    wb_params = wingbeat_params_from_config(config)
+    wb_descriptor = None
+    if wb_params is not None:
+        wb = compute_wingbeat_descriptor(np.asarray(feature), *wingbeat_band_bins(**wb_params))
+        wb_descriptor = torch.tensor(wb, dtype=torch.float32, device=device).unsqueeze(0)
+
     feature = normalize_feature(feature, training_stats_path(config), config["normalize_features"])
     if config["normalize_features"]:
         print(f"loading from {training_stats_path(config)}")
@@ -77,7 +90,7 @@ def main() -> None:
     model.eval()
 
     with torch.no_grad():
-        outputs = model(features, lengths)
+        outputs = model(features, lengths, wb_descriptor)
         probs = torch.softmax(outputs["species_logits"], dim=1)[0]
         pred_index = int(torch.argmax(probs).item())
         prob_values = probs.detach().cpu().tolist()

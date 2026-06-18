@@ -2,6 +2,8 @@ data/
 Development_data
 outputs
 sbatch/
+*.sbatch
+scripts/slurm_logs/
 .claude/
 __pycache__/
 *.pyc
@@ -11,3 +13,4 @@ job_log.md
 .ipynb_checkpoints/
 /paper/
 .venv
+/configs/

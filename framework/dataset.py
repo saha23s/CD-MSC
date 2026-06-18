@@ -34,6 +34,85 @@ def clip_instance_normalize(feature: np.ndarray, eps: float = 1e-8) -> np.ndarra
     return (feature - mean) / np.maximum(std, eps)
 
 
+# --- Physics-grounded wingbeat descriptor -----------------------------------
+# Fixed-dimensional, amplitude-invariant summary of the species-discriminative
+# wingbeat band (≈500–2200 Hz, the bins flagged species-dominated by the
+# frequency-band variance analysis on the test split). Computed from the
+# *un-normalised* dB log-mel energy so it is a genuine physical quantity rather
+# than a z-score artefact relative to the (D5-dominated) training statistics.
+WINGBEAT_DESCRIPTOR_DIM = 3
+_WB_LO_HZ, _WB_HI_HZ = 500.0, 2200.0
+
+
+def wingbeat_band_bins(
+    n_mels: int, fmin: float, fmax: float,
+    lo: float = _WB_LO_HZ, hi: float = _WB_HI_HZ,
+) -> Tuple[int, int]:
+    """Return (start, end) mel-bin indices covering ``lo``–``hi`` Hz.
+
+    Uses the same Slaney mel scale as the feature extractor
+    (``torchlibrosa.LogmelFilterBank`` → ``librosa.filters.mel``, ``htk=False``),
+    so the band aligns with the actual stored mel bins.
+    """
+    import librosa
+
+    centers = librosa.mel_frequencies(n_mels=n_mels, fmin=fmin, fmax=max(fmax, 1.0), htk=False)
+    start = int(np.searchsorted(centers, lo))
+    end   = int(np.searchsorted(centers, hi))
+    return max(0, min(start, n_mels - 1)), min(n_mels, max(end, start + 1))
+
+
+def wingbeat_params_from_config(config: Dict) -> Optional[Dict]:
+    """Wingbeat descriptor parameters from a resolved config, or None if disabled."""
+    if not config.get("use_wingbeat_feature", False):
+        return None
+    return {"n_mels": config["n_mels"], "fmin": config.get("fmin", 0.0), "fmax": config["fmax"]}
+
+
+def compute_wingbeat_descriptor(feature_db: np.ndarray, start: int, end: int) -> np.ndarray:
+    """Energy-weighted spectral summary of the wingbeat band.
+
+    Args:
+        feature_db: [T, n_mels] dB log-mel power *before* any normalisation
+            (stored features are ``10·log10(mel_power)``, ref=1.0).
+        start, end: mel-bin slice [start, end) defining the wingbeat band.
+
+    Returns:
+        [3] float32 = (centroid, bandwidth, band_energy_fraction):
+          - centroid: energy-weighted mean bin, normalised to [0, 1] across band;
+          - bandwidth: std of the band power distribution (harmonic richness);
+          - band_energy_fraction: in-band / total energy — a tonality/SNR proxy.
+
+        All three are invariant to a global amplitude scaling. Only frames whose
+        in-band energy is ≥ the per-clip median are aggregated, gating out
+        silence/noise frames where no insect is in flight.
+    """
+    band = feature_db[:, start:end]                       # [T, n_band] dB
+    if band.size == 0:
+        return np.zeros(WINGBEAT_DESCRIPTOR_DIM, dtype=np.float32)
+    power_band = np.power(10.0, band / 10.0)              # [T, n_band] linear power
+    power_all  = np.power(10.0, feature_db / 10.0)        # [T, n_mels]
+    e_t = power_band.sum(axis=1)                          # [T] per-frame in-band energy
+    if e_t.sum() <= 0:
+        return np.zeros(WINGBEAT_DESCRIPTOR_DIM, dtype=np.float32)
+
+    keep = e_t >= np.median(e_t)                          # energy gate → flight frames
+    if not keep.any():
+        keep = np.ones_like(e_t, dtype=bool)
+
+    pooled = power_band[keep].sum(axis=0)                 # [n_band] pooled in-band power
+    total  = pooled.sum()
+    if total <= 0:
+        return np.zeros(WINGBEAT_DESCRIPTOR_DIM, dtype=np.float32)
+
+    p   = pooled / total                                  # distribution over band
+    idx = np.linspace(0.0, 1.0, p.shape[0], dtype=np.float64)
+    centroid  = float((p * idx).sum())
+    bandwidth = float(np.sqrt((p * (idx - centroid) ** 2).sum()))
+    band_frac = float(total / power_all[keep].sum())
+    return np.array([centroid, bandwidth, band_frac], dtype=np.float32)
+
+
 def load_feature_payload(path: Union[str, Path]) -> Dict:
     with open(path, "rb") as handle:
         return pickle.load(handle)
@@ -63,6 +142,37 @@ def validate_feature_stats_payload(path: Union[str, Path], expected_signature: O
         raise ValueError("Feature statistics file does not match the current training feature configuration.")
 
 
+def compute_domain_stats(items: List[Dict]) -> Dict[str, tuple]:
+    """Per-domain (mean, std) over feature frames for per-domain z-score normalisation.
+
+    Aligns each recording domain to a common zero-mean / unit-variance region of
+    feature space, removing the per-domain offset that dominates cross-domain shift
+    (the D5 cluster sits ~1.5 from every other domain in Perch space). Computed
+    transductively from whatever items the dataset holds, so the held-out LODO
+    domain is normalised by its own statistics (test-time adaptation).
+    """
+    sums: Dict[str, np.ndarray] = {}
+    sqsums: Dict[str, np.ndarray] = {}
+    counts: Dict[str, int] = {}
+    for item in items:
+        feature = item["feature"].astype(np.float64)          # [T, D]
+        domain = item["domain"]
+        s = feature.sum(axis=0)
+        sq = np.square(feature).sum(axis=0)
+        if domain not in sums:
+            sums[domain], sqsums[domain], counts[domain] = s, sq, feature.shape[0]
+        else:
+            sums[domain] += s
+            sqsums[domain] += sq
+            counts[domain] += feature.shape[0]
+    stats: Dict[str, tuple] = {}
+    for domain in sums:
+        mean = (sums[domain] / counts[domain]).astype(np.float32)
+        var = np.maximum(sqsums[domain] / counts[domain] - np.square(mean.astype(np.float64)), 1e-12)
+        stats[domain] = (mean, np.sqrt(var).astype(np.float32))
+    return stats
+
+
 class MosquitoFeatureDataset(Dataset):
     def __init__(
         self,
@@ -76,6 +186,8 @@ class MosquitoFeatureDataset(Dataset):
         expected_feature_signature: Optional[str] = None,
         expected_stats_signature: Optional[str] = None,
         augment: Optional[Callable] = None,
+        wingbeat_params: Optional[Dict] = None,
+        per_domain_norm: bool = False,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -83,14 +195,22 @@ class MosquitoFeatureDataset(Dataset):
         self.training = training
         self.max_train_frames = max_train_frames
         self.max_eval_frames = max_eval_frames
-        self.normalize_features = normalize_features and feature_stats_path is not None
         self.clip_normalize = clip_normalize
         self.feature_mean = None
         self.feature_std = None
         self.augment = augment
-        if self.normalize_features:
-            validate_feature_stats_payload(feature_stats_path, expected_stats_signature)
-            self.feature_mean, self.feature_std = load_feature_stats(feature_stats_path)
+        self.wb_bins = wingbeat_band_bins(**wingbeat_params) if wingbeat_params else None
+        self.per_domain_norm = per_domain_norm
+        self.domain_stats: Optional[Dict[str, tuple]] = None
+        if per_domain_norm:
+            # Per-domain z-score from this split's own items (transductive).
+            self.domain_stats = compute_domain_stats(self.samples)
+            self.normalize_features = True
+        else:
+            self.normalize_features = normalize_features and feature_stats_path is not None
+            if self.normalize_features:
+                validate_feature_stats_payload(feature_stats_path, expected_stats_signature)
+                self.feature_mean, self.feature_std = load_feature_stats(feature_stats_path)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -107,22 +227,29 @@ class MosquitoFeatureDataset(Dataset):
             return feature[start : start + self.max_eval_frames]
         return feature
 
-    def _normalize(self, feature: np.ndarray) -> np.ndarray:
+    def _normalize(self, feature: np.ndarray, domain: str) -> np.ndarray:
         if not self.normalize_features:
             return feature
+        if self.per_domain_norm:
+            mean, std = self.domain_stats[domain]
+            return (feature - mean) / np.maximum(std, 1e-8)
         return (feature - self.feature_mean) / np.maximum(self.feature_std, 1e-8)
 
     def __getitem__(self, index: int) -> Dict:
         sample = self.samples[index]
         feature = sample["feature"].astype(np.float32)
         feature = self._maybe_crop(feature)
+        # Descriptor on raw dB energy, before clip/feature normalisation.
+        wb_descriptor = (
+            compute_wingbeat_descriptor(feature, *self.wb_bins) if self.wb_bins else None
+        )
         if self.clip_normalize:
             feature = clip_instance_normalize(feature)
-        feature = self._normalize(feature)
+        feature = self._normalize(feature, sample["domain"])
         feature_tensor = torch.tensor(feature, dtype=torch.float32)
         if self.training and self.augment is not None:
             feature_tensor = self.augment(feature_tensor)
-        return {
+        item = {
             "file_id": sample["file_id"],
             "feature": feature_tensor,
             "length": feature.shape[0],
@@ -132,6 +259,9 @@ class MosquitoFeatureDataset(Dataset):
             "domain": sample["domain"],
             "audio_path": sample["audio_path"],
         }
+        if wb_descriptor is not None:
+            item["wb_descriptor"] = torch.from_numpy(wb_descriptor)
+        return item
 
 
 class LodoFeatureDataset(Dataset):
@@ -151,6 +281,8 @@ class LodoFeatureDataset(Dataset):
         max_eval_frames: Optional[int] = None,
         clip_normalize: bool = False,
         augment: Optional[Callable] = None,
+        wingbeat_params: Optional[Dict] = None,
+        per_domain_norm: bool = False,
     ) -> None:
         self.samples = items
         self.feature_mean = feature_mean
@@ -158,9 +290,17 @@ class LodoFeatureDataset(Dataset):
         self.max_train_frames = max_train_frames
         self.max_eval_frames = max_eval_frames
         self.training = training
-        self.normalize_features = normalize_features and feature_mean is not None
         self.clip_normalize = clip_normalize
         self.augment = augment
+        self.wb_bins = wingbeat_band_bins(**wingbeat_params) if wingbeat_params else None
+        self.per_domain_norm = per_domain_norm
+        self.domain_stats: Optional[Dict[str, tuple]] = None
+        if per_domain_norm:
+            # Per-domain z-score from this split's own items (transductive).
+            self.domain_stats = compute_domain_stats(items)
+            self.normalize_features = True
+        else:
+            self.normalize_features = normalize_features and feature_mean is not None
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -181,17 +321,25 @@ class LodoFeatureDataset(Dataset):
         feature = sample["feature"].astype(np.float32)          # [T, n_mels]
         feature = self._maybe_crop(feature)
 
+        # Descriptor on raw dB energy, before clip/feature normalisation.
+        wb_descriptor = (
+            compute_wingbeat_descriptor(feature, *self.wb_bins) if self.wb_bins else None
+        )
+
         if self.clip_normalize:
             feature = clip_instance_normalize(feature)
 
-        if self.normalize_features:
+        if self.per_domain_norm:
+            mean, std = self.domain_stats[sample["domain"]]
+            feature = (feature - mean) / np.maximum(std, 1e-8)
+        elif self.normalize_features:
             feature = (feature - self.feature_mean) / np.maximum(self.feature_std, 1e-8)
 
         feature_tensor = torch.tensor(feature, dtype=torch.float32)
         if self.training and self.augment is not None:
             feature_tensor = self.augment(feature_tensor)
 
-        return {
+        item = {
             "file_id":       sample["file_id"],
             "feature":       feature_tensor,
             "length":        feature.shape[0],
@@ -201,6 +349,9 @@ class LodoFeatureDataset(Dataset):
             "domain":        sample["domain"],
             "audio_path":    sample["audio_path"],
         }
+        if wb_descriptor is not None:
+            item["wb_descriptor"] = torch.from_numpy(wb_descriptor)
+        return item
 
 
 def pad_collate_fn(batch: List[Dict]) -> Dict:
@@ -212,7 +363,7 @@ def pad_collate_fn(batch: List[Dict]) -> Dict:
     for idx, item in enumerate(batch):
         padded[idx, : item["length"], :] = item["feature"]
 
-    return {
+    collated = {
         "file_id": [item["file_id"] for item in batch],
         "features": padded,
         "lengths": lengths,
@@ -222,3 +373,6 @@ def pad_collate_fn(batch: List[Dict]) -> Dict:
         "domain": [item["domain"] for item in batch],
         "audio_path": [item["audio_path"] for item in batch],
     }
+    if batch and "wb_descriptor" in batch[0]:
+        collated["wb_descriptor"] = torch.stack([item["wb_descriptor"] for item in batch])
+    return collated

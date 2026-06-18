@@ -30,9 +30,11 @@ class LogMelSpectrogram(nn.Module):
         n_mels: int,
         fmin: int,
         fmax: int,
+        feature_type: str = "logmel",
     ) -> None:
         super().__init__()
         self.hop_length = hop_length
+        self.feature_type = feature_type
         self.spectrogram_extractor = Spectrogram(
             n_fft=n_fft,
             hop_length=hop_length,
@@ -42,20 +44,30 @@ class LogMelSpectrogram(nn.Module):
             pad_mode="reflect",
             freeze_parameters=True,
         )
-        self.logmel_extractor = LogmelFilterBank(
-            sr=sample_rate,
-            n_fft=n_fft,
-            n_mels=n_mels,
-            fmin=fmin,
-            fmax=fmax,
-            ref=1.0,
-            amin=1e-10,
-            top_db=None,
-            freeze_parameters=True,
+        # No mel filterbank when emitting a raw linear-frequency log-spectrogram.
+        self.logmel_extractor = (
+            LogmelFilterBank(
+                sr=sample_rate,
+                n_fft=n_fft,
+                n_mels=n_mels,
+                fmin=fmin,
+                fmax=fmax,
+                ref=1.0,
+                amin=1e-10,
+                top_db=None,
+                freeze_parameters=True,
+            )
+            if feature_type == "logmel"
+            else None
         )
 
     def forward(self, waveforms: torch.Tensor) -> torch.Tensor:
-        spectrogram = self.spectrogram_extractor(waveforms)
+        spectrogram = self.spectrogram_extractor(waveforms)  # [B, 1, T, n_fft//2+1] (power)
+        if self.feature_type == "logspec":
+            # dB-scaled linear-frequency spectrogram, matching LogmelFilterBank's
+            # power_to_db (ref=1.0, amin=1e-10, top_db=None).
+            logspec = 10.0 * torch.log10(torch.clamp(spectrogram, min=1e-10))
+            return logspec.squeeze(1)
         logmel = self.logmel_extractor(spectrogram)
         return logmel.squeeze(1)
 

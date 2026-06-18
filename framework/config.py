@@ -36,16 +36,26 @@ def load_config(path: Union[str, Path]) -> Dict:
 def resolve_config(config: Dict) -> Dict:
     config = dict(config)
     sample_rate = config["sample_rate"]
-    config["n_mels"] = 64
-    config["n_mels_filterbank"] = 64  # always 64 mel filters; model dim may differ
     config["fmin"] = 0
     config["fmax"] = int(sample_rate / 2)
     config["win_length"] = max(1, int(math.floor(1024 * (sample_rate / 16000))))
-    config["hop_length"] = max(1, int(math.floor(160 * (sample_rate / 16000))))
+    # hop_length is normally derived from sample_rate; honour an explicit override
+    # (e.g. "hop_length": 64) for time-resolution experiments.
+    default_hop = max(1, int(math.floor(160 * (sample_rate / 16000))))
+    config["hop_length"] = int(config.get("hop_length", default_hop))
     config["n_fft"] = config["win_length"]
+    # feature_type selects the spectral representation: 64-band log-mel (default) or
+    # a linear-frequency log-spectrogram ("logspec") using the raw STFT bins.
+    config.setdefault("feature_type", "logmel")
+    if config["feature_type"] == "logspec":
+        config["n_mels"] = config["n_fft"] // 2 + 1
+        config["n_mels_filterbank"] = config["n_mels"]
+    else:
+        config["n_mels"] = 64
+        config["n_mels_filterbank"] = 64  # always 64 mel filters; model dim may differ
     config.setdefault("use_delta", False)  # ensure key present for config_subset/signature
     if config["use_delta"]:
-        config["n_mels"] = 64 * 2  # delta appended along freq axis → model input is 128-dim
+        config["n_mels"] = config["n_mels_filterbank"] * 2  # delta appended along freq axis
     return config
 
 

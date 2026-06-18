@@ -39,6 +39,7 @@ def build_feature_extractor(config: dict, device: torch.device) -> LogMelSpectro
         n_mels=config["n_mels_filterbank"],  # always 64; n_mels may be 128 with use_delta
         fmin=config["fmin"],
         fmax=config["fmax"],
+        feature_type=config.get("feature_type", "logmel"),
     ).to(device)
     extractor.eval()
     return extractor

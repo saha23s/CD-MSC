@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Union
 import torch
 
 from framework.config import config_signature, feature_signature_payload, load_config
-from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
+from framework.dataset import MosquitoFeatureDataset, pad_collate_fn, wingbeat_params_from_config
 from framework.engine import balanced_accuracy, evaluate_model
 from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
 from framework.utilization import build_model, choose_device, make_loader, split_feature_path, training_stats_path
@@ -130,6 +130,8 @@ def evaluate_checkpoint(
         clip_normalize=config.get("clip_normalize", False),
         expected_feature_signature=expected_feature_signature,
         expected_stats_signature=expected_training_stats_signature,
+        wingbeat_params=wingbeat_params_from_config(config),
+        per_domain_norm=config.get("per_domain_norm", False),
     )
     eval_batch_size = config.get("eval_batch_size", config["batch_size"])
     dataloader = make_loader(dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)

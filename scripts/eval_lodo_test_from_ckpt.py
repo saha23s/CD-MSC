@@ -54,6 +54,7 @@ def evaluate_one(ckpt_path: Path) -> dict:
 
     # Build the test dataset without touching the (mel) signature / global-stats
     # machinery, then inject the checkpoint's per-fold stats directly.
+    per_domain = config.get("per_domain_norm", False)
     dataset = MosquitoFeatureDataset(
         feature_pickle_path=split_feature_path(config, "test"),
         feature_stats_path=None,
@@ -61,8 +62,11 @@ def evaluate_one(ckpt_path: Path) -> dict:
         training=False,
         normalize_features=False,
         clip_normalize=config.get("clip_normalize", False) or False,
+        per_domain_norm=per_domain,
     )
-    if config["normalize_features"]:
+    # per_domain_norm computes per-domain stats from the test split itself
+    # (transductive), matching training; otherwise inject the global per-fold stats.
+    if not per_domain and config["normalize_features"]:
         dataset.feature_mean = feature_mean
         dataset.feature_std = feature_std
         dataset.normalize_features = True

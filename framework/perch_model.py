@@ -83,7 +83,12 @@ class PerchClassifier(nn.Module):
         if self.grl is not None:
             self.grl.set_lambda(lambda_)
 
-    def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor,
+        wb_descriptor: Optional[torch.Tensor] = None,  # unused; matches the common forward signature
+    ) -> Dict[str, torch.Tensor]:
         B, T, _ = features.shape
 
         # Masked mean-pool over valid Perch windows.  [B, T, 1280] → [B, 1280]

@@ -28,7 +28,7 @@ from framework.augmentation import build_augmentation_pipeline, build_fbs_mix_fn
 from framework.config import config_signature, load_config
 from framework.gradient_reversal import dann_lambda
 from framework.utilization import make_balanced_sampler, get_domain_labels
-from framework.dataset import LodoFeatureDataset, pad_collate_fn
+from framework.dataset import LodoFeatureDataset, pad_collate_fn, wingbeat_params_from_config
 from framework.engine import evaluate_model, train_one_epoch
 from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
 from framework.utilization import (
@@ -114,7 +114,10 @@ def experiment_name(fold: str, seed: int, config: Dict) -> str:
     epochs     = int(config["epochs"])
     min_epoch  = int(config.get("early_stopping_min_epoch", 10))
     patience   = int(config.get("early_stopping_patience", 10))
-    base = f"LODO_{fold}_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    if fold == "full":
+        base = f"FULL_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    else:
+        base = f"LODO_{fold}_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
     tag = config.get("experiment_tag", "")
     return f"{base}_{tag}" if tag else base
 
@@ -234,15 +237,26 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         save_json(output_dir / "resolved_config.json", config)
         logger = make_logger(output_dir / "train.log")
 
-        # ---- LODO split -----------------------------------------------------
-        train_items, val_items = get_lodo_folds(all_items, fold)
-        logger.info(
-            "LODO fold=%s | train=%d samples (domains %s) | val=%d samples",
-            fold,
-            len(train_items),
-            sorted({item["domain"] for item in train_items}),
-            len(val_items),
-        )
+        # ---- train/val split ------------------------------------------------
+        if fold == "full":
+            # Official split: train on the full training set (all domains, incl. D5),
+            # validate on the official validation set. No domain held out.
+            train_items, val_items = train_all_items, val_all_items
+            logger.info(
+                "FULL official split | train=%d samples (domains %s) | val=%d samples (official validation)",
+                len(train_items),
+                sorted({item["domain"] for item in train_items}),
+                len(val_items),
+            )
+        else:
+            train_items, val_items = get_lodo_folds(all_items, fold)
+            logger.info(
+                "LODO fold=%s | train=%d samples (domains %s) | val=%d samples",
+                fold,
+                len(train_items),
+                sorted({item["domain"] for item in train_items}),
+                len(val_items),
+            )
 
         # ---- feature stats from the LODO training fold ----------------------
         feature_mean, feature_std = compute_lodo_stats(train_items)
@@ -270,6 +284,8 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         n_train_frames = max_train_frames(config)
         clip_norm      = config.get("clip_normalize", False)
         max_eval_fr    = config.get("max_eval_frames", None)
+        per_domain     = config.get("per_domain_norm", False)
+        wb_params      = wingbeat_params_from_config(config)
         train_dataset  = LodoFeatureDataset(
             items=train_items,
             feature_mean=feature_mean,
@@ -279,6 +295,8 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             normalize_features=config["normalize_features"],
             clip_normalize=clip_norm,
             augment=aug_pipeline,
+            wingbeat_params=wb_params,
+            per_domain_norm=per_domain,
         )
         val_dataset = LodoFeatureDataset(
             items=val_items,
@@ -289,6 +307,8 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
             training=False,
             normalize_features=config["normalize_features"],
             clip_normalize=clip_norm,
+            wingbeat_params=wb_params,
+            per_domain_norm=per_domain,
         )
         sampler = (
             make_balanced_sampler(get_domain_labels(train_dataset))
@@ -333,6 +353,7 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
                 model=model, dataloader=train_loader, optimizer=optimizer, device=device,
                 mixup_fn=mixup_fn, fbs_mix_fn=fbs_mix_fn, grl_lambda=grl_lam,
                 domain_loss_weight=config.get("domain_loss_weight", 1.0),
+                cdan_entropy=config.get("cdan_entropy", False),
                 scol_weight=config.get("scol_weight", 0.0),
                 scol_tau=config.get("scol_tau", 0.01),
                 dicl_weight=config.get("dicl_weight", 0.0),
@@ -415,17 +436,21 @@ def train_lodo_experiment(config: Dict, fold: str, overwrite: bool = False) -> D
         )
         logger.info("Saved final checkpoint → %s", final_ckpt_path)
 
+        # In FULL mode the test "unseen" partition follows the official per-species
+        # mapping (split_summary.json); in LODO mode it is the held-out domain.
+        test_held_out = None if fold == "full" else fold
+
         # ---- post-training evaluation: best checkpoint ----------------------
-        logger.info("Evaluating best checkpoint (LODO val + test).")
+        logger.info("Evaluating best checkpoint (val + test).")
         model.load_state_dict(torch.load(best_ckpt_path, map_location=device, weights_only=False)["model_state_dict"])
         evaluate_and_save_lodo_val(model, val_loader, device, output_dir / "best_model_eval", best_ckpt_path, fold)
-        evaluate_and_save_test(config, best_ckpt_path, output_dir / "best_model_eval", lodo_held_out_domain=fold)
+        evaluate_and_save_test(config, best_ckpt_path, output_dir / "best_model_eval", lodo_held_out_domain=test_held_out)
 
         # ---- post-training evaluation: final checkpoint ---------------------
-        logger.info("Evaluating final checkpoint (LODO val + test).")
+        logger.info("Evaluating final checkpoint (val + test).")
         model.load_state_dict(torch.load(final_ckpt_path, map_location=device, weights_only=False)["model_state_dict"])
         evaluate_and_save_lodo_val(model, val_loader, device, output_dir / "final_model_eval", final_ckpt_path, fold)
-        evaluate_and_save_test(config, final_ckpt_path, output_dir / "final_model_eval", lodo_held_out_domain=fold)
+        evaluate_and_save_test(config, final_ckpt_path, output_dir / "final_model_eval", lodo_held_out_domain=test_held_out)
 
         return {
             "status":           "completed",
@@ -451,8 +476,9 @@ def parse_args() -> argparse.Namespace:
         "--fold",
         type=str,
         required=True,
-        choices=DOMAIN_NAMES,
-        help="Domain to hold out as the validation set (e.g. D3).",
+        choices=DOMAIN_NAMES + ["full"],
+        help="Domain to hold out as the validation set (e.g. D3), or 'full' for the "
+             "official train/val split with no domain held out.",
     )
     parser.add_argument(
         "--seed",

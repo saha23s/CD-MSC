@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 
+from framework.dataset import WINGBEAT_DESCRIPTOR_DIM
 from framework.gradient_reversal import GradientReversalLayer
 from framework.mixstyle import MixStyle
 
@@ -161,13 +162,25 @@ class MTRCNNClassifier(nn.Module):
 
         embed_dim: int = config.get("embed_dim", 32)
 
-        self.species_classifier = nn.Linear(embed_dim, num_species_classes)
-        self.domain_classifier  = nn.Linear(embed_dim, num_domain_classes)
-
         # GRL is only instantiated when domain_adversarial is enabled; otherwise None.
         self.grl: Optional[GradientReversalLayer] = (
             GradientReversalLayer(lambda_=0.0) if config.get("domain_adversarial", False) else None
         )
+
+        # CDAN (Long et al., NeurIPS 2018): condition the domain discriminator on the
+        # species prediction via the multilinear map  f ⊗ softmax(ŷ).  This aligns the
+        # JOINT distribution p(f, y) across domains instead of the marginal p(f), so
+        # domain alignment no longer collapses different species together.
+        # Only meaningful with the adversarial game active (the GRL must exist).
+        self.conditional_dann: bool = (
+            config.get("conditional_dann", False) and self.grl is not None
+        )
+        # When conditioning, the discriminator's input is the flattened outer product,
+        # so its width grows from embed_dim to embed_dim × num_species_classes.
+        domain_in_dim = embed_dim * num_species_classes if self.conditional_dann else embed_dim
+
+        self.species_classifier = nn.Linear(embed_dim, num_species_classes)
+        self.domain_classifier  = nn.Linear(domain_in_dim, num_domain_classes)
 
         # Optional projection head for contrastive losses (DiCL/SdaL).
         proj_dim: int = config.get("contrastive_proj_dim", 0)
@@ -176,13 +189,23 @@ class MTRCNNClassifier(nn.Module):
             if proj_dim > 0 else None
         )
 
-        self.embedding = nn.Linear(64 * 3, embed_dim)
+        # Physics-grounded wingbeat descriptor concatenated to the CNN features
+        # before the embedding projection (energy-weighted band summary, computed
+        # in the dataset from un-normalised dB log-mel; see framework/dataset.py).
+        self.use_wingbeat: bool = config.get("use_wingbeat_feature", False)
+        embed_in_dim = 64 * 3 + (WINGBEAT_DESCRIPTOR_DIM if self.use_wingbeat else 0)
+        self.embedding = nn.Linear(embed_in_dim, embed_dim)
 
     def set_grl_lambda(self, lambda_: float) -> None:
         if self.grl is not None:
             self.grl.set_lambda(lambda_)
 
-    def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor,
+        wb_descriptor: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
         x = features.unsqueeze(1).transpose(1, 3)
         x = self.input_bn(x)
         x = x.transpose(1, 3)
@@ -193,10 +216,30 @@ class MTRCNNClassifier(nn.Module):
             self.kernel_7_branch(x, lengths),
         ], dim=1)                                                # [B, 192]
 
-        embedding = F.gelu(self.embedding(branch_out))
-        domain_input = self.grl(embedding) if self.grl is not None else embedding
+        if self.use_wingbeat:
+            if wb_descriptor is None:
+                raise ValueError(
+                    "use_wingbeat_feature is set but wb_descriptor was not passed to forward()."
+                )
+            branch_out = torch.cat([branch_out, wb_descriptor.to(branch_out.dtype)], dim=1)  # [B, 195]
+
+        embedding = F.gelu(self.embedding(branch_out))            # f: [B, embed_dim]
+        species_logits = self.species_classifier(embedding)      # [B, num_species]
+
+        if self.conditional_dann:
+            # Multilinear conditioning: g ⊗ f  ->  [B, num_species, embed_dim] -> [B, C*D].
+            # softmax is detached so gradients shape the features (via the GRL), not the
+            # class predictions — standard CDAN practice for a stable conditioning signal.
+            g = F.softmax(species_logits, dim=1).detach()        # [B, num_species]
+            cond = torch.bmm(g.unsqueeze(2), embedding.unsqueeze(1))  # [B, C, D]
+            domain_input = self.grl(cond.flatten(start_dim=1))   # [B, C*D]
+        elif self.grl is not None:
+            domain_input = self.grl(embedding)                   # plain DANN
+        else:
+            domain_input = embedding                             # no adversarial game
+
         out: Dict[str, torch.Tensor] = {
-            "species_logits": self.species_classifier(embedding),
+            "species_logits": species_logits,
             "domain_logits":  self.domain_classifier(domain_input),
             "embedding":      embedding,
         }

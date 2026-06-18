@@ -16,7 +16,7 @@ from framework.augmentation import build_augmentation_pipeline, build_fbs_mix_fn
 from framework.gradient_reversal import dann_lambda
 from framework.utilization import make_balanced_sampler, get_domain_labels
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
-from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
+from framework.dataset import MosquitoFeatureDataset, pad_collate_fn, wingbeat_params_from_config
 from framework.engine import evaluate_model, train_one_epoch
 from framework.metadata import DOMAIN_NAMES, SPECIES_NAMES
 from framework.utilization import (
@@ -171,6 +171,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         )
         fbs_mix_fn   = build_fbs_mix_fn(config)
         clip_norm    = config.get("clip_normalize", False)
+        wb_params    = wingbeat_params_from_config(config)
 
         train_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "training"),
@@ -182,6 +183,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             expected_feature_signature=expected_training_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
             augment=aug_pipeline,
+            wingbeat_params=wb_params,
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -192,6 +194,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             clip_normalize=clip_norm,
             expected_feature_signature=expected_validation_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            wingbeat_params=wb_params,
         )
         print(f"loading from {split_feature_path(config, 'training')}")
         print(f"loading from {split_feature_path(config, 'validation')}")
@@ -242,6 +245,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 fbs_mix_fn=fbs_mix_fn,
                 grl_lambda=grl_lam,
                 domain_loss_weight=config.get("domain_loss_weight", 1.0),
+                cdan_entropy=config.get("cdan_entropy", False),
                 scol_weight=config.get("scol_weight", 0.0),
                 scol_tau=config.get("scol_tau", 0.01),
                 dicl_weight=config.get("dicl_weight", 0.0),

@@ -60,8 +60,11 @@ def evaluate_model(
             lengths = batch["lengths"].to(device)
             batch_species_labels = batch["species_labels"].to(device)
             batch_domain_labels = batch["domain_labels"].to(device)
+            wb_descriptor = batch.get("wb_descriptor")
+            if wb_descriptor is not None:
+                wb_descriptor = wb_descriptor.to(device)
 
-            outputs = model(features, lengths)
+            outputs = model(features, lengths, wb_descriptor)
             batch_species_logits = outputs["species_logits"]
             batch_domain_logits = outputs["domain_logits"]
 
@@ -162,6 +165,7 @@ def train_one_epoch(
     fbs_mix_fn=None,
     grl_lambda=None,
     domain_loss_weight: float = 1.0,
+    cdan_entropy: bool = False,
     scol_weight: float = 0.0,
     scol_tau: float = 0.01,
     dicl_weight: float = 0.0,
@@ -198,6 +202,9 @@ def train_one_epoch(
         lengths = batch["lengths"].to(device)
         species_labels = batch["species_labels"].to(device)
         domain_labels = batch["domain_labels"].to(device)
+        wb_descriptor = batch.get("wb_descriptor")
+        if wb_descriptor is not None:
+            wb_descriptor = wb_descriptor.to(device)
 
         # FBS-Mix: frequency-band selective style mixing (input-level, before model)
         # lengths passed so statistics are computed on valid frames only (not padding)
@@ -210,7 +217,7 @@ def train_one_epoch(
             sp_a, sp_b, dom_a, dom_b, lam = species_labels, species_labels, domain_labels, domain_labels, 1.0
 
         optimizer.zero_grad()
-        outputs = model(features, lengths)
+        outputs = model(features, lengths, wb_descriptor)
         species_logits = outputs["species_logits"]
         domain_logits = outputs["domain_logits"]
 
@@ -219,10 +226,26 @@ def train_one_epoch(
             lam * F.cross_entropy(species_logits, sp_a, weight=sw)
             + (1.0 - lam) * F.cross_entropy(species_logits, sp_b, weight=sw)
         )
-        domain_loss = (
-            lam * F.cross_entropy(domain_logits, dom_a)
-            + (1.0 - lam) * F.cross_entropy(domain_logits, dom_b)
-        )
+        if cdan_entropy:
+            # CDAN+E: down-weight the domain game on uncertain (high-entropy) species
+            # predictions, whose conditioning map f⊗g is unreliable. Weight per sample
+            # by 1 + exp(-H(g)); H computed without grad so it only reweights, not trains.
+            with torch.no_grad():
+                g = F.softmax(species_logits, dim=1)
+                entropy = -(g * torch.log(g + 1e-8)).sum(dim=1)          # [B]
+                w = 1.0 + torch.exp(-entropy)                            # [B], ∈ (1, 2]
+                w = w / w.mean()                                         # mean-1 normalised
+            domain_loss = (
+                w * (
+                    lam * F.cross_entropy(domain_logits, dom_a, reduction="none")
+                    + (1.0 - lam) * F.cross_entropy(domain_logits, dom_b, reduction="none")
+                )
+            ).mean()
+        else:
+            domain_loss = (
+                lam * F.cross_entropy(domain_logits, dom_a)
+                + (1.0 - lam) * F.cross_entropy(domain_logits, dom_b)
+            )
         loss = species_loss + domain_loss_weight * domain_loss
 
         # Contrastive / alignment losses operate on raw (non-mixed) labels.
