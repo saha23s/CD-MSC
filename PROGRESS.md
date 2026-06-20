@@ -362,11 +362,70 @@ than regular DANN. With balanced batches (Exp 4), the combination was best so fa
 
 ---
 
+## D4 Species Analysis — Key Findings (2026-06-20)
+
+Reviewed figures from `visualize_f0.py`. Three findings that change the picture for An. dirus.
+
+### Finding 1 — An. dirus trains on D1, not D5
+
+The mean mel spectrum plot (`f0_mean_mel_spectrum.png`) shows An. dirus with only a D1 line —
+no D5 curve. The generalisation problem for An. dirus is **D1→D4**, not D5→D4 as previously
+assumed. It has never been recorded in a lab (D5) environment.
+
+### Finding 2 — F0 collapse: all three D4 species converge to ~300 Hz
+
+From the median F0 heatmap (`f0_heatmap_fmin300.png`):
+
+| Species | D1 F0 | D4 F0 |
+|---------|--------|--------|
+| An. dirus | 793 Hz | 307 Hz |
+| An. stephensi | — | 304 Hz |
+| An. minimus | 495 Hz | 303 Hz |
+
+**All three D4 species land at ~300–307 Hz in D4.** Frequency alone is useless for
+discrimination in the test domain. The model must use harmonic structure, spectral
+envelope shape, or amplitude modulation to distinguish them.
+
+An. dirus specifically experiences a **2.5× F0 shift** between its training domain (D1, 793 Hz)
+and its test domain (D4, 307 Hz). The model learned to expect An. dirus at ~800 Hz; test
+clips arrive at ~300 Hz. This alone could explain 0% recall even if domain features are well-aligned.
+
+### Finding 3 — The wingbeat signal IS present in D4
+
+Voiced frame fraction for An. dirus D4 ≈ 0.34 (34% of frames have detectable wingbeat).
+This is not zero — the signal exists, the model just cannot use it.
+
+### New Research Direction (2026-06-20)
+
+**Central hypothesis:** An. dirus, An. stephensi, and An. minimus are distinguishable in D4
+by features beyond F0 — harmonic overtone ratios, spectral envelope shape above 300 Hz,
+amplitude modulation depth. If true, these species CAN be separated and recall can be
+improved. If false (all three genuinely acoustically identical in D4), the problem is a
+physics limitation, not a modelling one.
+
+**Immediate action:** Direct visual comparison of An. dirus D4 vs An. stephensi D4 vs
+An. minimus D4 via `visualize_d4_species.py` (to be written). Four figures:
+1. Spectrogram grid — 5 examples per D4 species side by side
+2. Mean mel spectra comparison — three D4 species overlaid in D4
+3. An. dirus D1 vs D4 — training domain vs test domain for same species
+4. Low-frequency power spectrum (0–1500 Hz) — harmonic content at F0 + overtones
+
+**If discriminative features exist in D4:**
+- Design features targeting harmonic ratios rather than raw mel bins
+- Instance normalisation (not CMN) preserves harmonic ratios while removing gain offset
+- Add a harmonic CNN branch or harmonic-weighted spectrogram input
+
+**If D4 species are genuinely indistinguishable:**
+- Accept An. dirus D4 = 0% as a physics constraint, not a modelling failure
+- Redirect all compute to the D1 bottleneck (An. arabiensis: 0.099 → improvement target)
+
+---
+
 ## Research Findings & Brainstorming — June 15, 2026
 
-### Strategic reframe: D1 species are the highest-leverage target
+### Strategic reframe: D1 species remain the highest-leverage target
 
-BAunseen is a mean across 9 species. An. dirus is likely stuck at 0 (76 clips, D4 unseen, zero across 10 seeds). Accepting that, the ceiling is 8/9 = 0.889. The real gains are in the three D1 species, which together have 3310 unseen test clips and large training datasets but currently contribute essentially zero:
+BAunseen is a mean across 9 species. The three D1 species together have 3310 unseen test clips:
 
 | Species | Training clips | D1 unseen test clips | Baseline BAunseen | If improved to 0.3 |
 |---------|---------------|---------------------|-------------------|--------------------|
