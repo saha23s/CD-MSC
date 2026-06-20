@@ -69,6 +69,8 @@ class MosquitoFeatureDataset(Dataset):
         use_fda: bool = False,
         fda_beta: float = 0.05,
         fda_prob: float = 0.5,
+        dirus_freq_shift_bins: int = 0,
+        dirus_temporal_dropout: float = 0.0,
     ) -> None:
         payload = load_feature_payload(feature_pickle_path)
         validate_feature_payload(payload, expected_feature_signature)
@@ -89,6 +91,8 @@ class MosquitoFeatureDataset(Dataset):
         self.use_fda = use_fda and training
         self.fda_beta = fda_beta
         self.fda_prob = fda_prob
+        self.dirus_freq_shift_bins = dirus_freq_shift_bins
+        self.dirus_temporal_dropout = dirus_temporal_dropout
         # Pre-index field (D1–D4) samples for fast random access during FDA augmentation.
         # domain_label==4 is D5 (lab); 0–3 are field domains.
         self.field_indices: List[int] = []
@@ -134,6 +138,24 @@ class MosquitoFeatureDataset(Dataset):
     def _d5_noise(self, feature: np.ndarray) -> np.ndarray:
         # Add Gaussian noise to D5 (lab) clips during training to simulate field SNR
         return feature + np.random.normal(0.0, self.d5_noise_std, feature.shape).astype(np.float32)
+
+    def _dirus_freq_shift(self, feature: np.ndarray) -> np.ndarray:
+        # Shift An. dirus D1 training clips downward in frequency to simulate D4 conditions.
+        # D1 median F0 ~793 Hz; D4 median F0 ~307 Hz — a shift of ~13 mel bins downward.
+        # Negative roll moves content toward lower-frequency bins.
+        return np.roll(feature, self.dirus_freq_shift_bins, axis=1)
+
+    def _dirus_temporal_dropout(self, feature: np.ndarray) -> np.ndarray:
+        # Randomly silence a fraction of frames in An. dirus D1 clips to simulate intermittent
+        # flight bursts observed in D4 field recordings (voiced fraction ~0.34 vs ~1.0 in D1).
+        T = feature.shape[0]
+        n_drop = int(T * self.dirus_temporal_dropout)
+        if n_drop > 0:
+            drop_frames = np.random.choice(T, size=n_drop, replace=False)
+            out = feature.copy()
+            out[drop_frames, :] = 0.0
+            return out
+        return feature
 
     def _freq_shift(self, feature: np.ndarray) -> np.ndarray:
         shift = random.randint(-self.freq_shift_bins, self.freq_shift_bins)
@@ -219,6 +241,13 @@ class MosquitoFeatureDataset(Dataset):
             feature = self._d5_noise(feature)
         if self.training and self.freq_shift_bins > 0 and sample["domain_label"] == 4:
             feature = self._freq_shift(feature)
+        # An. dirus D1 augmentation: simulate D4 recording conditions.
+        # species_label==5 is An. dirus (0-indexed); domain_label==0 is D1.
+        _is_dirus_d1 = sample["species_label"] == 5 and sample["domain_label"] == 0
+        if self.training and self.dirus_freq_shift_bins != 0 and _is_dirus_d1:
+            feature = self._dirus_freq_shift(feature)
+        if self.training and self.dirus_temporal_dropout > 0.0 and _is_dirus_d1:
+            feature = self._dirus_temporal_dropout(feature)
         if self.use_delta:
             feature = self._compute_delta(feature)
         if self.spec_augment:

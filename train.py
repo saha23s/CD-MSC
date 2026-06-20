@@ -82,6 +82,8 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     d1_oversample = config.get("d1_oversample", 1.0)
     if d1_oversample != 1.0:
         name += f"_d1x{d1_oversample}"
+    if config.get("dirus_freq_shift_bins", 0) != 0 or config.get("dirus_temporal_dropout", 0.0) > 0.0:
+        name += "_dirusaug"
     return name
 
 
@@ -220,6 +222,8 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             use_fda=config.get("use_fda", False),
             fda_beta=config.get("fda_beta", 0.05),
             fda_prob=config.get("fda_prob", 0.5),
+            dirus_freq_shift_bins=config.get("dirus_freq_shift_bins", 0),
+            dirus_temporal_dropout=config.get("dirus_temporal_dropout", 0.0),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
