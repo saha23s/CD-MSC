@@ -1,6 +1,6 @@
 # CD-MSC Project Progress & Technical Notes
 
-Branch: `aaron/preprocessing` | Collaborator: saha23s | Deadline: passed 2026-06-15
+Branch: `aaron/preprocessing` | Collaborator: saha23s | Deadline: 2026-06-22 23:59 AoE
 
 ---
 
@@ -91,9 +91,10 @@ Seed 42 single run: BAseen=0.883, BAunseen=0.168, DSG=0.716
 | Exp 1 | DANN α=1.0 | — | — | — | ❌ Collapsed ep13; α too high |
 | Exp 2 | DANN α=0.3 | 0.8769 | 0.2225 | 0.6544 | ✅ +27% BAunseen |
 | Exp 3 | C-DANN α=0.3 | 0.8879 | 0.1865 | 0.7014 | ⚠️ Worse than Exp 2; no balancing |
-| **Exp 4** | **C-DANN α=0.3 + balanced batches** | **0.7950** | **0.2626** | **0.5324** | **✅ BEST — benchmark to beat** |
+| **Exp 4** | **C-DANN α=0.3 + balanced batches** | **0.7950** | **0.2626** | **0.5324** | **✅ Strong baseline** |
 | Exp 5 | Exp 4 + B128 + SpecAugment | 0.7227 | 0.2308 | 0.4919 | ⚠️ Worse; SpecAug hurt rare clips |
-| Exp 6 | Exp 4 + CMN + D5noise(0.1) | ~0.79 | 0.2452 | ~0.54 | ⚠️ Marginal; preprocessing not helpful |
+| Exp 6 | Exp 4 + CMN + D5noise(0.1) | ~0.79 | 0.2452 | ~0.54 | ⚠️ Marginal; could not isolate CMN vs noise |
+| **Exp B** | **Exp 4 + D1 oversample ×3.0** | **0.7728** | **0.2670** | **0.5058** | **✅ BEST — new benchmark** |
 | SupCon-A | SupCon 1.0, no DANN, sxd-balanced | — | 0.2008 | — | ❌ Worse; D5-only positives useless for bottleneck species |
 | SupCon-B | Exp 4 + SupCon 1.0 | ~0.80 | 0.2436 | 0.5538 | ⚠️ Below Exp 4 |
 | SupCon-C | Exp 4 + SupCon 0.5 + freqshift±3 | ~0.72 | 0.2303 | 0.4869 | ❌ Confounded; freqshift collapsed BAseen |
@@ -260,14 +261,16 @@ training unless we use the test set (which we must not optimise against).
 
 ---
 
-## Next Steps (priority order, updated 2026-06-15)
+## Next Steps (priority order, updated 2026-06-20)
 
-1. **Exp B — D1-heavy batch weighting (immediate, ~50 min):** ✅ Implemented.
-   `d1_oversample=3.0` in `train.py` sampler; exposed as `D1_OVERSAMPLE` in colab_dann.ipynb cell 6.
-   Output dir: `MTRCNN_seed42_B64_E100_earlystop_min20_pati10_dann0.3_cdann_balanced_d1x3.0/`
+1. **Exp B — D1-heavy batch weighting:** ✅ COMPLETE. BAunseen=0.2670, BAseen=0.7728, DSG=0.5058. New best.
+   Checkpoint: `MTRCNN_seed42_B64_E100_earlystop_min20_pati10_dann0.3_cdann_balanced_d1x3.0/`
 
-2. **Exp C — Per-clip CMVN (~50 min):** Set `CMN=True` in notebook.
-   Subtracts per-clip time-axis mean per mel bin — already implemented, just never tried on Exp 4 base alone.
+2. **Exp C — Per-clip CMN on Exp B (~50 min, in progress):** Set `CMN=True`, `D1_OVERSAMPLE=3.0`.
+   **CMN = mean-only** (subtracts per-clip time-axis mean per mel bin). NOT CMVN — the implementation
+   (`framework/dataset.py:_cmn`) does mean subtraction only, no variance normalization.
+   We tried CMN in Exp 6 but combined with D5 noise (0.1 std); couldn't isolate CMN's contribution.
+   This is the clean test: same as Exp B + CMN only.
 
 3. **Ablation: balanced batches only, no domain head (~50 min):** Set `DANN_ALPHA_MAX=0.0`, `CDANN=False`, `BALANCE_BATCHES=True`.
    We've never isolated how much of Exp 4's gain is the sampler vs. the adversarial head. If this scores ~0.24+, C-DANN is adding little.
@@ -433,10 +436,12 @@ Modify the `WeightedRandomSampler` in `train.py`: give D1 clips 3× the weight o
 
 *Why:* An. arabiensis (1820 unseen test clips), An. gambiae (818), Cx. quinquefasciatus (672) all have D1 as their unseen domain and currently score near zero. They all have large D5 training datasets (16K–57K clips) — the bottleneck is D1 exposure, not data quantity. There are 634 D1 training clips total. Upweighting them gives the model more D1 passes per epoch without changing the training set.
 
-**Exp C — Per-clip CMVN on Exp 4 (one training run, ~50 min):**
-Normalize each clip to zero mean and unit variance **per mel bin over time**, applied at both train and test. This removes both gain (amplitude offset from microphone sensitivity) and variance (dynamic range differences) between recording environments. Unlike CMN (mean only) and unlike histogram matching (train-only → mismatch), CMVN is symmetric and stateless per clip.
+**Exp C — Per-clip CMN on Exp B (one training run, ~50 min):**
+Subtract per-clip time-axis mean per mel bin — removes spectral envelope offset (microphone/room response) between domains. Applied at both train and eval (stateless per clip, no train/test mismatch). **This is CMN (mean only), not CMVN** — the implementation in `framework/dataset.py:_cmn` does `feature - feature.mean(axis=0)` only; no variance normalization.
 
-*Why:* D4's spectral peak at 223 Hz vs D5's 595 Hz could partly be a gain/response artifact rather than true spectral content difference. CMVN can't fix that, but it removes one dimension of inter-domain variation cheaply.
+Config: same as Exp B (`D1_OVERSAMPLE=3.0`, `CDANN=True`) + `CMN=True`.
+
+*Why:* Exp 6 tried CMN + D5 noise together and got 0.2452 (worse than Exp 4). We can't tell whether CMN was the culprit or the noise. This run isolates CMN alone on top of our current best (Exp B, 0.2670).
 
 **Exp D — FDA without C-DANN, β=0.01 (one training run, ~50 min):**
 Plain cross-entropy + balanced batches + FDA at β=0.01 (vs β=0.05 previously). No adversarial domain head. This isolates whether the Fourier augmentation mechanism has value independent of the interaction with DANN's gradient.
