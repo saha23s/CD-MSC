@@ -471,6 +471,18 @@ or at smaller β, as a standalone augmentation on the Exp 4 base.
 | Domain feature stats | Drive: `MyDrive/CD-MSC-feature/domain_feature_stats.json` |
 | Released baseline checkpoints | `outputs/MTRCNN_seed42_B64_E100_earlystop_min10_pati5/` (in repo) |
 | Experiment outputs | Drive: `MyDrive/CD-MSC-outputs/` (saved at end of each Colab run) |
+| **Exp 4 checkpoint** | **Drive: `MyDrive/CD-MSC-outputs/MTRCNN_seed42_B64_E100_earlystop_min10_pati5_dann0.3_cdann_balanced/`** |
+| All 10 baseline seed checkpoints | Drive: `MyDrive/CD-MSC-outputs/MTRCNN_seed{seed}_B64_E100_earlystop_min10_pati5/` |
 | Training notebook | `colab_dann.ipynb` — all experiment flags in cell 6 |
-| Evaluation set | Not yet downloaded — Zenodo link in README.md line 9 |
+| Evaluation notebook | `colab_evaluate.ipynb` — load any checkpoint, evaluate on dev test, writes submission.txt + probs.jsonl |
+| Evaluation set | Downloaded — Zenodo record 20478577 |
 | Brainstorm doc | `docs/brainstorm_jun2026.md` |
+
+## Submission Pipeline (to build: colab_submission.ipynb)
+
+For the actual challenge submission:
+- Input: eval WAV files (`CDMSC2026_EVAL_XXXXXX.wav`) — no ground truth labels
+- Tool: loop `predict.py` over all eval WAVs (handles feature extraction on-the-fly)
+- Output: `submission.txt` with `file_id,predicted_species_id` (1-indexed)
+- `colab_evaluate.ipynb` is for dev test only (needs pre-extracted features + labels for metrics)
+- `colab_submission.ipynb` (not yet built) runs predict.py on raw eval WAVs → TXT
