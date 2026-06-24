@@ -14,10 +14,12 @@
   "normalize_waveform": true,
   "normalize_features": true,
   "epochs": 100,
-  "early_stopping_min_epoch": 10,
-  "early_stopping_patience": 5,
+  "early_stopping_min_epoch": 20,
+  "early_stopping_patience": 10,
   "learning_rate": 0.001,
   "weight_decay": 0.0001,
   "dropout": 0.2,
-  "device": "auto"
+  "device": "auto",
+  "cmn": false,
+  "d5_noise_std": 0.0
 }

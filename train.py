@@ -6,11 +6,13 @@ Affiliation: Machine Learning Research Group, University of Oxford
 """
 
 import argparse
+import json
 from copy import deepcopy
 from pathlib import Path
 
 import torch
 from torch.optim import AdamW
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from framework.config import config_signature, feature_signature_payload, load_config, run_context_payload
 from framework.dataset import MosquitoFeatureDataset, pad_collate_fn
@@ -46,7 +48,43 @@ def experiment_name_for_seed(seed: int, config: dict) -> str:
     epochs = int(config["epochs"])
     min_epoch = int(config.get("early_stopping_min_epoch", 10))
     patience = int(config.get("early_stopping_patience", 10))
-    return f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    name = f"MTRCNN_seed{seed}_B{batch_size}_E{epochs}_earlystop_min{min_epoch}_pati{patience}"
+    dann_alpha_max = config.get("dann_alpha_max", 0.0)
+    if dann_alpha_max > 0.0:
+        name += f"_dann{dann_alpha_max}"
+    if config.get("cdann", False):
+        name += "_cdann"
+    if config.get("batch_balance_domain", False):
+        if config.get("balance_mode", "domain") == "species_domain":
+            name += "_balanced_sxd"
+        else:
+            name += "_balanced"
+    if config.get("spec_augment", False):
+        name += "_specaug"
+    if config.get("cmn", False):
+        name += "_cmn"
+    if config.get("d5_noise_std", 0.0) > 0.0:
+        name += f"_noise{config['d5_noise_std']}"
+    if config.get("use_delta", False):
+        name += "_delta"
+    if config.get("supcon_weight", 0.0) > 0.0:
+        name += f"_supcon{config['supcon_weight']}"
+    if config.get("freq_shift_bins", 0) > 0:
+        name += f"_freqshift{config['freq_shift_bins']}"
+    if config.get("use_approx_hpss", False):
+        name += "_hpss"
+    if config.get("hist_match", False):
+        name += "_histmatch"
+    if config.get("use_attention_pool", False):
+        name += "_attnpool"
+    if config.get("use_fda", False):
+        name += f"_fda{config.get('fda_beta', 0.05)}"
+    d1_oversample = config.get("d1_oversample", 1.0)
+    if d1_oversample != 1.0:
+        name += f"_d1x{d1_oversample}"
+    if config.get("dirus_freq_shift_bins", 0) != 0 or config.get("dirus_temporal_dropout", 0.0) > 0.0:
+        name += "_dirusaug"
+    return name
 
 
 def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: Path, model_name: str) -> dict:
@@ -76,6 +114,8 @@ def evaluate_and_save_outputs(config: dict, checkpoint_path: Path, output_dir: P
 
 def train_experiment(config: dict, overwrite: bool = False) -> dict:
     config = deepcopy(config)
+    if config.get("use_delta", False):
+        config["model_n_mels"] = config["n_mels"] * 2
     config["experiment_name"] = experiment_name_for_seed(config["seed"], config)
     set_seed(config["seed"])
     device = choose_device(config["device"])
@@ -152,6 +192,12 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
         save_json(output_dir / "resolved_config.json", config)
         logger = make_logger(output_dir / "train.log")
 
+        domain_stats = None
+        if config.get("hist_match", False):
+            stats_path = Path(config.get("domain_stats_path", "Development_data/feature/domain_feature_stats.json"))
+            with open(stats_path) as fh:
+                domain_stats = json.load(fh)
+
         expected_training_feature_signature = config_signature(feature_signature_payload(config, "training"))
         expected_validation_feature_signature = config_signature(feature_signature_payload(config, "validation"))
         expected_training_stats_signature = expected_training_feature_signature
@@ -163,6 +209,21 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_training_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            spec_augment=config.get("spec_augment", False),
+            spec_augment_time_mask=config.get("spec_augment_time_mask", 40),
+            spec_augment_freq_mask=config.get("spec_augment_freq_mask", 10),
+            cmn=config.get("cmn", False),
+            d5_noise_std=config.get("d5_noise_std", 0.0),
+            use_delta=config.get("use_delta", False),
+            freq_shift_bins=config.get("freq_shift_bins", 0),
+            use_approx_hpss=config.get("use_approx_hpss", False),
+            hist_match=config.get("hist_match", False),
+            domain_stats=domain_stats,
+            use_fda=config.get("use_fda", False),
+            fda_beta=config.get("fda_beta", 0.05),
+            fda_prob=config.get("fda_prob", 0.5),
+            dirus_freq_shift_bins=config.get("dirus_freq_shift_bins", 0),
+            dirus_temporal_dropout=config.get("dirus_temporal_dropout", 0.0),
         )
         val_dataset = MosquitoFeatureDataset(
             feature_pickle_path=split_feature_path(config, "validation"),
@@ -172,13 +233,42 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             normalize_features=config["normalize_features"],
             expected_feature_signature=expected_validation_feature_signature,
             expected_stats_signature=expected_training_stats_signature,
+            cmn=config.get("cmn", False),
+            use_delta=config.get("use_delta", False),
+            use_approx_hpss=config.get("use_approx_hpss", False),
         )
         print(f"loading from {split_feature_path(config, 'training')}")
         print(f"loading from {split_feature_path(config, 'validation')}")
         if config["normalize_features"]:
             print(f"loading from {training_stats_path(config)}")
 
-        train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
+        if config.get("batch_balance_domain", False):
+            domain_labels = torch.tensor([s["domain_label"] for s in train_dataset.samples])
+            if config.get("balance_mode", "domain") == "species_domain":
+                species_labels_all = torch.tensor([s["species_label"] for s in train_dataset.samples])
+                pair_keys = species_labels_all * len(DOMAIN_NAMES) + domain_labels
+                pair_counts = torch.bincount(pair_keys, minlength=len(SPECIES_NAMES) * len(DOMAIN_NAMES)).float().clamp(min=1)
+                weights = 1.0 / pair_counts[pair_keys]
+            else:
+                domain_counts = torch.bincount(domain_labels, minlength=len(DOMAIN_NAMES)).float().clamp(min=1)
+                weights = 1.0 / domain_counts[domain_labels]
+            d1_oversample = config.get("d1_oversample", 1.0)
+            if d1_oversample != 1.0:
+                # D1 is domain index 0; boost its sampling weight relative to other field domains.
+                weights = weights * torch.where(domain_labels == 0,
+                                                torch.full_like(weights, d1_oversample),
+                                                torch.ones_like(weights))
+            sampler = WeightedRandomSampler(weights, num_samples=len(train_dataset), replacement=True)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=config["batch_size"],
+                sampler=sampler,
+                num_workers=config["num_workers"],
+                collate_fn=pad_collate_fn,
+                pin_memory=device.type == "cuda",
+            )
+        else:
+            train_loader = make_loader(train_dataset, config["batch_size"], True, config["num_workers"], device, pad_collate_fn)
         eval_batch_size = config.get("eval_batch_size", config["batch_size"])
         val_loader = make_loader(val_dataset, eval_batch_size, False, config["num_workers"], device, pad_collate_fn)
 
@@ -198,6 +288,11 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 dataloader=train_loader,
                 optimizer=optimizer,
                 device=device,
+                epoch=epoch,
+                total_epochs=config["epochs"],
+                dann_alpha_max=config.get("dann_alpha_max", 0.0),
+                supcon_weight=config.get("supcon_weight", 0.0),
+                supcon_temperature=config.get("supcon_temperature", 0.1),
             )
             val_metrics = evaluate_model(
                 model=model,
@@ -213,6 +308,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                 "train_loss": round(train_metrics["loss"], 6),
                 "train_species_loss": round(train_metrics["species_loss"], 6),
                 "train_domain_loss": round(train_metrics["domain_loss"], 6),
+                "train_supcon_loss": round(train_metrics["supcon_loss"], 6),
                 "train_species_accuracy": round(train_metrics["species_accuracy"], 6),
                 "train_domain_accuracy": round(train_metrics["domain_accuracy"], 6),
                 "val_loss": round(val_metrics["loss"], 6),
@@ -227,7 +323,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
             append_metrics(output_dir / "metrics.csv", row)
             logger.info(row)
 
-            current_score = val_metrics["species_balanced_accuracy"]
+            current_score = val_metrics.get("species_balanced_accuracy", 0.0)
             if current_score > best_score:
                 best_score = current_score
                 best_epoch = epoch
@@ -239,7 +335,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
                         "config": config,
                         "epoch": epoch,
                         "val_metrics": best_val_metrics,
-                        "selection_metric": "species_balanced_accuracy",
+                        "selection_metric": "val_species_balanced_accuracy",
                     },
                     best_checkpoint_path,
                 )
@@ -249,7 +345,7 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
             if epoch >= early_stopping_min_epoch and epochs_without_improvement >= early_stopping_patience:
                 logger.info(
-                    "Early stopping at epoch %s. Best epoch: %s, best validation species_balanced_accuracy: %.6f, min_epoch: %s, patience: %s",
+                    "Early stopping at epoch %s. Best epoch: %s, best val species_balanced_accuracy: %.6f, min_epoch: %s, patience: %s",
                     epoch,
                     best_epoch,
                     best_score,
@@ -271,8 +367,24 @@ def train_experiment(config: dict, overwrite: bool = False) -> dict:
 
         logger.info("Evaluating best checkpoint outputs.")
         best_eval = evaluate_and_save_outputs(config, best_checkpoint_path, output_dir, "best_model_eval")
+        _bm = best_eval["test_metrics"]
+        logger.info(
+            "Best model  | val_BA=%.4f | test BA_seen=%.4f  BA_unseen=%.4f  DSG=%.4f",
+            best_val_metrics.get("species_balanced_accuracy", float("nan")),
+            _bm.get("BA_seen", float("nan")),
+            _bm.get("BA_unseen", float("nan")),
+            _bm.get("DSG", float("nan")),
+        )
         logger.info("Evaluating final checkpoint outputs.")
         final_eval = evaluate_and_save_outputs(config, final_checkpoint_path, output_dir, "final_model_eval")
+        _fm = final_eval["test_metrics"]
+        logger.info(
+            "Final model | val_BA=%.4f | test BA_seen=%.4f  BA_unseen=%.4f  DSG=%.4f",
+            last_val_metrics.get("species_balanced_accuracy", float("nan")),
+            _fm.get("BA_seen", float("nan")),
+            _fm.get("BA_unseen", float("nan")),
+            _fm.get("DSG", float("nan")),
+        )
 
         return {
             "status": "completed",
